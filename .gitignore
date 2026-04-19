@@ -1,0 +1,26 @@
+# Private Keys
+.api_key
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE Settings
+.idea/
+.vscode/
+
+# Project Specific Media (Large Files)
+media/
+
+# Databases
+*.db
+*.sqlite3
+
+# Logs
+*.log
