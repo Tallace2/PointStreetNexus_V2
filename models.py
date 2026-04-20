@@ -28,7 +28,7 @@ class Supplier(Base):
     website = Column(String(200))
     contact_id = Column(Integer, ForeignKey("Contacts.contact_id"))
 
-# --- MASTER PARTS ---
+# --- MASTER PARTS & PROCUREMENT ---
 class PartMaster(Base):
     __tablename__ = "Part_Master"
     part_id = Column(Integer, primary_key=True)
@@ -39,6 +39,30 @@ class PartMaster(Base):
     category = Column(String(50))
     unit_cost = Column(Float)
 
+class Quote(Base):
+    __tablename__ = "Quotes"
+    quote_id = Column(Integer, primary_key=True)
+    supplier_id = Column(Integer, ForeignKey("Suppliers.supplier_id"))
+    part_id = Column(Integer, ForeignKey("Part_Master.part_id"))
+    quoted_price = Column(Float)
+    quote_date = Column(DateTime, default=datetime.utcnow)
+
+class Order(Base):
+    __tablename__ = "Orders"
+    order_id = Column(Integer, primary_key=True)
+    supplier_id = Column(Integer, ForeignKey("Suppliers.supplier_id"))
+    order_date = Column(DateTime, default=datetime.utcnow)
+    total_amount = Column(Float)
+    status = Column(String(20))
+
+class OrderDetail(Base):
+    __tablename__ = "Order_Details"
+    detail_id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("Orders.order_id"))
+    part_id = Column(Integer, ForeignKey("Part_Master.part_id"))
+    quantity = Column(Float)
+    price_at_order = Column(Float)
+
 # --- PROJECT MANAGEMENT ---
 class Project(Base):
     __tablename__ = "Projects"
@@ -46,7 +70,7 @@ class Project(Base):
     name = Column(String(100), nullable=False)
     description = Column(Text)
     budget = Column(Float)
-    start_date = Column(DateTime) # Restoring start_date
+    start_date = Column(DateTime)
     status = Column(String(20))
 
 class ProjectBOM(Base):
@@ -77,6 +101,7 @@ class PropertyGridNode(Base):
     latitude = Column(Float)
     longitude = Column(Float)
     last_scan_date = Column(DateTime, default=datetime.utcnow)
+    scan_device = Column(String(100))
 
 # --- IOT & AUTOMATION ---
 class IoTHub(Base):
@@ -106,6 +131,7 @@ class IoTDevice(Base):
     device_id = Column(String(100), primary_key=True)
     hub_id = Column(Integer, ForeignKey("IoT_Hubs.hub_id"))
     name = Column(String(100))
+    device_type = Column(String(50))
 
 class SensorNode(Base):
     __tablename__ = "Sensor_Nodes"
@@ -121,6 +147,7 @@ class GardenBed(Base):
     bed_type = Column(String(50))
     dimensions = Column(String(50))
     soil_type = Column(String(100))
+    grid_node_id = Column(Integer, ForeignKey("Property_Grid.node_id"))
 
 class BotanicalRegistry(Base):
     __tablename__ = "Botanical_Registry"
@@ -146,7 +173,9 @@ class Planting(Base):
     bed_id = Column(Integer, ForeignKey("Garden_Beds.bed_id"), nullable=True)
     species_id = Column(Integer, ForeignKey("Botanical_Registry.species_id"), nullable=True)
     plant_name = Column(String(100))
+    variety = Column(String(100)) # Added variety
     status = Column(String(50))
+    health_score = Column(Integer) # Added health_score
     latitude = Column(Float)
     longitude = Column(Float)
     date_planted = Column(DateTime, default=datetime.utcnow)

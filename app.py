@@ -2,29 +2,36 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from database import SessionLocal, engine, init_db
+from database import SessionLocal, engine, init_db, SERVER
 from models import (Base, GardenBed, SensorReading, Planting, Task, BotanicalRegistry, 
                    IoTHub, PLCNode, PLCTag, Project, MediaAsset, PropertyGridNode)
 from datetime import datetime, UTC, timedelta
 import os
 import requests
 import base64
-import traceback
 import shutil
 import socket
 from PIL import Image, ImageOps
-from PIL.ExifTags import TAGS, GPSTAGS
-from st_aggrid import AgGrid, GridOptionsBuilder, DataReturnMode, GridUpdateMode
 
+# Support for HEIC
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
+
+# --- PAGE CONFIG ---
 st.set_page_config(page_title="PSN Architect V2", layout="wide", initial_sidebar_state="expanded")
 
 # --- UI THEME ---
 st.markdown("""
     <style>
     .main { background-color: #f0f2f6; }
-    .stMetric { background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #d1d5db; }
-    h1, h2, h3 { color: #003366; }
-    .stButton>button { background-color: #003366; color: white; border-radius: 8px; }
+    .stMetric { background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #d1d5db; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }
+    h1, h2, h3 { color: #003366; font-family: 'Segoe UI', sans-serif; }
+    .stButton>button { background-color: #003366; color: white; border-radius: 8px; height: 3em; }
+    /* Mobile Table Fix */
+    .stDataFrame { overflow-x: auto; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -35,7 +42,8 @@ KEY_FILE = ".api_key"
 if 'api_key' not in st.session_state:
     if os.path.exists(KEY_FILE):
         with open(KEY_FILE, "r") as f: st.session_state['api_key'] = f.read().strip()
-    else: st.session_state['api_key'] = ""
+    else:
+        st.session_state['api_key'] = ""
 
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -48,16 +56,7 @@ LOCAL_IP = get_local_ip()
 
 def identify_plant(image_bytes, simulate=False):
     if simulate:
-        return {
-            "scientific_name": "Acer palmatum",
-            "common_name": "Mock Japanese Maple",
-            "description": "Simulation mode: Testing SQL and CRUD without burning API credits.",
-            "plant_category": "Sapindales",
-            "watering": "Medium", "watering_days": 4,
-            "sunlight": "Partial Shade", "soil": "Well-drained",
-            "fertilizer": "Simulated NPK 10-10-10", "growth_rate": "Moderate", "confidence": 0.99
-        }
-    
+        return {"scientific_name": "Acer palmatum", "common_name": "Mock Japanese Maple", "description": "Simulation mode active.", "plant_category": "Trees", "watering": "Medium", "watering_days": 4, "sunlight": "Partial Shade", "soil": "Well-drained", "fertilizer": "10-10-10", "growth_rate": "Moderate", "confidence": 0.99}
     key = st.session_state['api_key']
     if not key: return None
     b64 = base64.b64encode(image_bytes).decode("ascii")
@@ -70,90 +69,162 @@ def identify_plant(image_bytes, simulate=False):
             best = data["suggestions"][0]
             det = best.get("plant_details", {})
             w = det.get("watering", {}).get("max", 2)
-            return {
-                "scientific_name": best.get("plant_name", "Unknown"),
-                "common_name": det.get("common_names", ["Unknown"])[0] if det.get("common_names") else "Unknown",
-                "description": det.get("description", {}).get("value", "No description."),
-                "plant_category": det.get("taxonomy", {}).get("order", "Biological"),
-                "watering": {1:"Low", 2:"Medium", 3:"High"}.get(w, "Medium"),
-                "watering_days": det.get("watering", {}).get("min", 7),
-                "sunlight": str(det.get("sunlight", {}).get("description", "Varies")),
-                "soil": str(det.get("soil", {}).get("description", "Well-Drained")),
-                "fertilizer": "Monthly Standard",
-                "growth_rate": det.get("growth_rate", "Moderate"),
-                "confidence": float(best.get("probability", 0))
-            }
+            return {"scientific_name": best.get("plant_name", "Unknown"), "common_name": det.get("common_names", ["Unknown"])[0] if det.get("common_names") else "Unknown", "description": det.get("description", {}).get("value", "No description."), "plant_category": det.get("taxonomy", {}).get("order", "Biological"), "watering": {1:"Low", 2:"Medium", 3:"High"}.get(w, "Medium"), "watering_days": det.get("watering", {}).get("min", 7), "sunlight": str(det.get("sunlight", {}).get("description", "Partial Sun")), "soil": str(det.get("soil", {}).get("description", "Well-Drained")), "fertilizer": "Monthly Standard", "growth_rate": det.get("growth_rate", "Moderate"), "confidence": float(best.get("probability", 0))}
     except: return None
     return None
 
 def main():
     st.sidebar.title("🌿 PSN Architect")
-    
-    # CREDIT SAVER TOGGLE
-    st.sidebar.subheader("API Credit Control")
-    simulate_mode = st.sidebar.toggle("Simulate AI Identification", value=True, help="Turn ON to test UI without using Plant.id credits.")
-    
+    sim_mode = st.sidebar.toggle("Simulate AI Identification", value=True)
     menu = st.sidebar.radio("Navigation", 
-        ["Executive Dashboard", "Species Registry", "Intake Center", "Media Asset CRUD", "Garden Inventory", "Projects & Brainstorm", "Siri Setup", "Infrastructure", "Admin"])
+        ["Executive Dashboard", "Species Registry", "Intake Center", "Media Asset CRUD", "Garden Inventory", "Property Grid Mapping", "Projects & Brainstorm", "Siri Setup", "Infrastructure", "Admin"])
     
-    # API Key Management
     st.sidebar.divider()
-    new_key = st.sidebar.text_input("Plant.id API Key", value=st.session_state['api_key'], type="password")
-    if st.sidebar.button("💾 Permanent Save Key"):
-        with open(KEY_FILE, "w") as f: f.write(new_key)
-        st.session_state['api_key'] = new_key; st.sidebar.success("Key Locked.")
+    st.sidebar.info(f"🌐 Server: {SERVER}")
 
     db = SessionLocal()
 
-    if menu == "Intake Center":
-        st.title("📸 Intake Center")
-        if simulate_mode: st.warning("🛠️ SIMULATION MODE ACTIVE: No API credits will be used.")
-        img = st.file_uploader("Upload Image", type=["jpg","png","jpeg"])
-        if img:
-            st.image(img, width=400)
-            if st.button("🚀 Process Intake"):
-                res = identify_plant(img.getvalue(), simulate=simulate_mode)
-                if res:
-                    try:
-                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        f_path = os.path.abspath(os.path.join(MEDIA_DIR, f"intake_{ts}.jpg"))
-                        with open(f_path, "wb") as f: f.write(img.getbuffer())
-                        
-                        spec = db.query(BotanicalRegistry).filter(BotanicalRegistry.scientific_name == res["scientific_name"]).first()
-                        if not spec:
-                            spec = BotanicalRegistry(common_name=res["common_name"], scientific_name=res["scientific_name"], plant_category=res["plant_category"], description=res["description"], preferred_watering=res["watering"], fertilizer_needs=res["fertilizer"], ai_confidence=res["confidence"])
-                            db.add(spec); db.commit(); db.refresh(spec)
-                        
-                        new_p = Planting(species_id=spec.species_id, plant_name=res["common_name"], status="Intake", date_planted=datetime.now(UTC))
-                        db.add(new_p); db.commit(); db.refresh(new_p)
-                        
-                        db.add(MediaAsset(file_path=f_path, entity_type="Planting", entity_id=new_p.planting_id, ai_confidence=res["confidence"], timestamp=datetime.now(UTC)))
-                        db.commit(); st.success(f"Intake Complete (Simulated: {simulate_mode})"); st.rerun()
-                    except Exception as e: st.error(f"SQL Error: {e}")
-
-    # (Keep rest of main() logic same...)
-    elif menu == "Executive Dashboard":
+    if menu == "Executive Dashboard":
         st.title("📊 Point Street Nexus Overview")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Registry Size", db.query(BotanicalRegistry).count())
-        c2.metric("Total Plantings", db.query(Planting).count())
-        c3.metric("Project Tasks", db.query(Task).count())
-        c4.metric("Media Assets", db.query(MediaAsset).count())
+        c1.metric("Species", db.query(BotanicalRegistry).count())
+        c2.metric("Plantings", db.query(Planting).count())
+        c3.metric("Photos", db.query(MediaAsset).count())
+        c4.metric("Tasks", db.query(Task).count())
+        
+        st.subheader("Recent Garden Activity")
+        df_recent = pd.read_sql("SELECT TOP 10 plant_name, status, date_planted FROM Plantings ORDER BY date_planted DESC", engine)
+        st.dataframe(df_recent, use_container_width=True)
 
     elif menu == "Species Registry":
         st.title("📖 Master Species Registry")
         df = pd.read_sql("SELECT * FROM Botanical_Registry", engine)
-        if not df.empty: AgGrid(df, key="registry_stable")
+        if not df.empty:
+            st.subheader("Species Overview")
+            st.dataframe(df[['species_id', 'common_name', 'plant_category', 'ai_confidence']], use_container_width=True)
+            
+            sel_species = st.selectbox("🔍 Select Species for CRUD / Care Sheet", options=df['common_name'].tolist())
+            if sel_species:
+                row = df[df['common_name'] == sel_species].iloc[0]
+                with st.expander(f"✨ Detailed Care & Edit: {sel_species}", expanded=True):
+                    # CRUD: Update
+                    new_common = st.text_input("Common Name", value=row['common_name'])
+                    new_desc = st.text_area("Description", value=row['description'])
+                    new_water = st.text_input("Watering", value=row['preferred_watering'])
+                    new_fert = st.text_input("Fertilizer", value=row['fertilizer_needs'])
+                    
+                    col1, col2 = st.columns(2)
+                    if col1.button("💾 Save Changes"):
+                        target = db.query(BotanicalRegistry).get(int(row['species_id']))
+                        target.common_name = new_common
+                        target.description = new_desc
+                        target.preferred_watering = new_water
+                        target.fertilizer_needs = new_fert
+                        db.commit()
+                        st.success("Changes saved to SharkEngine!")
+                        st.rerun()
+                    
+                    if col2.button("🗑️ Delete Species"):
+                        db.query(BotanicalRegistry).filter(BotanicalRegistry.species_id == int(row['species_id'])).delete()
+                        db.commit()
+                        st.warning(f"Deleted {sel_species}.")
+                        st.rerun()
+
+                    st.divider()
+                    st.write(f"**Scientific Name:** {row['scientific_name']}")
+                    st.write(f"**Sunlight:** {row['preferred_sunlight']}")
+                    st.write(f"**Confidence:** {row['ai_confidence']:.1%}")
+        else: st.info("Registry empty.")
+
+    elif menu == "Intake Center":
+        st.title("📸 AI Intake & Assignment")
+        t1, t2 = st.tabs(["New AI Intake", "Assign to Location"])
+        with t1:
+            img = st.file_uploader("Upload Plant Photo", type=["jpg","png","jpeg","heic"])
+            if img and st.button("🚀 Process Full Intake"):
+                try:
+                    pil_img = Image.open(img); pil_img = ImageOps.exif_transpose(pil_img)
+                    res = identify_plant(img.getvalue(), simulate=sim_mode)
+                    if res:
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        f_name = f"intake_{ts}.jpg"; f_path = os.path.abspath(os.path.join(MEDIA_DIR, f_name))
+                        pil_img.convert("RGB").save(f_path, "JPEG")
+                        spec = db.query(BotanicalRegistry).filter(BotanicalRegistry.scientific_name == res["scientific_name"]).first()
+                        if not spec:
+                            spec = BotanicalRegistry(common_name=res["common_name"], scientific_name=res["scientific_name"], plant_category=res["plant_category"], description=res["description"], preferred_watering=res["watering"], watering_frequency_days=res["watering_days"], fertilizer_needs=res["fertilizer"], ai_confidence=res["confidence"])
+                            db.add(spec); db.commit(); db.refresh(spec)
+                        new_p = Planting(species_id=spec.species_id, plant_name=res["common_name"], status="Intake", date_planted=datetime.now(UTC))
+                        db.add(new_p); db.commit(); db.refresh(new_p)
+                        db.add(MediaAsset(file_path=f_path, entity_type="Planting", entity_id=new_p.planting_id, ai_confidence=res["confidence"], timestamp=datetime.now(UTC)))
+                        db.commit(); st.balloons(); st.success(f"Saved {res['common_name']}!")
+                except Exception as e: st.error(f"Error: {e}")
+        with t2:
+            unassigned = db.query(Planting).filter(Planting.bed_id == None).all()
+            if unassigned:
+                p_map = {f"{p.plant_name} ({p.planting_id})": p.planting_id for p in unassigned}
+                sel_p = st.selectbox("Select Plant", options=list(p_map.keys()))
+                beds = db.query(GardenBed).all()
+                b_map = {f"{b.name}": b.bed_id for b in beds}
+                sel_b = st.selectbox("Select Target Bed", options=list(b_map.keys()))
+                if st.button("Confirm Assignment"):
+                    plant = db.query(Planting).get(p_map[sel_p]); plant.bed_id = b_map[sel_b]; plant.status = "In Ground"
+                    db.commit(); st.success("Assigned Successfully!"); st.rerun()
 
     elif menu == "Media Asset CRUD":
-        st.title("📸 Media CRUD")
-        df = pd.read_sql("SELECT * FROM Media_Assets", engine)
+        st.title("📸 Media Asset Control Center")
+        df = pd.read_sql("SELECT media_id, entity_id, ai_confidence, timestamp, file_path FROM Media_Assets", engine)
         if not df.empty:
-            grid = AgGrid(df, gridOptions=GridOptionsBuilder.from_dataframe(df).configure_selection('single', use_checkbox=True).build())
-            sel = grid['selected_rows']
-            if sel is not None and len(sel) > 0:
-                row = sel.iloc[0] if isinstance(sel, pd.DataFrame) else sel[0]
-                if os.path.exists(row['file_path']): st.image(row['file_path'], width=600)
+            st.dataframe(df[['media_id', 'entity_id', 'ai_confidence', 'timestamp']], use_container_width=True)
+            sel_id = st.selectbox("Select Photo ID to View/Delete", options=df['media_id'].tolist())
+            row = df[df['media_id'] == sel_id].iloc[0]
+            if os.path.exists(row['file_path']):
+                st.image(ImageOps.exif_transpose(Image.open(row['file_path'])), width=700)
+                if st.button("🗑️ Delete Asset"):
+                    db.query(MediaAsset).filter(MediaAsset.media_id == int(sel_id)).delete()
+                    if os.path.exists(row['file_path']): os.remove(row['file_path'])
+                    db.commit(); st.rerun()
+        else: st.info("No media recorded.")
+
+    elif menu == "Garden Inventory":
+        st.title("📂 Garden Inventory")
+        df_inv = pd.read_sql("SELECT * FROM Plantings", engine)
+        if not df_inv.empty: st.dataframe(df_inv, use_container_width=True)
+        else: st.info("Inventory empty.")
+
+    elif menu == "Property Grid Mapping":
+        st.title("🗺️ 10x20 Property Grid")
+        grid_data = pd.read_sql("SELECT * FROM Property_Grid", engine)
+        if not grid_data.empty:
+            z_data = grid_data.pivot(index='grid_y', columns='grid_x', values='elevation').values
+            st.plotly_chart(px.surface(z=z_data, title="Topography"), use_container_width=True)
+        else: st.info("Grid empty.")
+
+    elif menu == "Projects & Brainstorm":
+        st.title("📋 Projects")
+        df_t = pd.read_sql("SELECT * FROM Tasks", engine)
+        if not df_t.empty: st.dataframe(df_t, use_container_width=True)
+        with st.expander("💡 Brainstorm New Idea"):
+            idea = st.text_input("Thought")
+            if st.button("Save"):
+                db.add(Task(name=idea, task_type="Brainstorm")); db.commit(); st.rerun()
+
+    elif menu == "Siri Setup":
+        st.title("🎙️ Siri Setup")
+        s_url = f"http://{LOCAL_IP}:5000/brainstorm?thought="
+        st.code(s_url); st.image(f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={s_url}")
+
+    elif menu == "Infrastructure":
+        st.title("🎛️ Infrastructure")
+        st.subheader("IoT Hubs")
+        st.table(pd.read_sql("SELECT * FROM IoT_Hubs", engine))
+        st.subheader("PLC Nodes")
+        st.table(pd.read_sql("SELECT * FROM PLC_Nodes", engine))
+
+    elif menu == "Admin":
+        st.title("🛠️ Admin")
+        if st.button("🧨 WIPE ALL TABLES"):
+            db.close(); Base.metadata.drop_all(bind=engine); shutil.rmtree(MEDIA_DIR, ignore_errors=True); os.makedirs(MEDIA_DIR)
+            init_db(); st.rerun()
 
     db.close()
 
