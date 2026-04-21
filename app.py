@@ -14,6 +14,9 @@ import shutil
 import socket
 from PIL import Image, ImageOps
 
+# Version Configuration
+VERSION = "V2.3.2" # Updated version number
+
 # Support for HEIC
 try:
     from pillow_heif import register_heif_opener
@@ -25,17 +28,17 @@ except ImportError:
 from lake_collector import get_lake_data
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="PSN Architect V2", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title=f"PSN Architect {VERSION}", layout="wide", initial_sidebar_state="expanded")
 
 # --- UI THEME ---
-st.markdown("""
+st.markdown(f"""
     <style>
-    .main { background-color: #f0f2f6; }
-    .stMetric { background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #d1d5db; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }
-    h1, h2, h3 { color: #003366; font-family: 'Segoe UI', sans-serif; }
-    .stButton>button { background-color: #003366; color: white; border-radius: 8px; height: 3em; }
+    .main {{ background-color: #f0f2f6; }}
+    .stMetric {{ background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #d1d5db; box-shadow: 2px 2px 5px rgba(0,0/0,0.05); }}
+    h1, h2, h3 {{ color: #003366; font-family: 'Segoe UI', sans-serif; }}
+    .stButton>button {{ background-color: #003366; color: white; border-radius: 8px; height: 3em; }}
     /* Mobile Table Fix */
-    .stDataFrame { overflow-x: auto; }
+    .stDataFrame {{ overflow-x: auto; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -78,7 +81,7 @@ def identify_plant(image_bytes, simulate=False):
     return None
 
 def main():
-    st.sidebar.title("🌿 PSN Architect")
+    st.sidebar.title(f"🌿 PSN Architect {VERSION}") # Display version in sidebar
     sim_mode = st.sidebar.toggle("Simulate AI & Data", value=True)
     menu = st.sidebar.radio("Navigation", 
         ["Executive Dashboard", "Species Registry", "Intake Center", "Media Asset CRUD", "Garden Inventory", "Property Grid Mapping", "Lake Data", "Projects & Brainstorm", "Siri Setup", "Infrastructure", "Admin"])
@@ -88,14 +91,121 @@ def main():
 
     db = SessionLocal()
 
-    if menu == "Property Grid Mapping":
+    if menu == "Executive Dashboard":
+        st.title("📊 Point Street Nexus Overview")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Species", db.query(BotanicalRegistry).count())
+        c2.metric("Plantings", db.query(Planting).count())
+        c3.metric("Photos", db.query(MediaAsset).count())
+        c4.metric("Active Tasks", db.query(Task).filter(Task.is_completed == False).count())
+        
+        st.subheader("🚀 Today's Mission Tasks")
+        df_tasks = pd.read_sql("SELECT name, task_type, priority FROM Tasks WHERE is_completed = 0 ORDER BY priority ASC", engine)
+        if not df_tasks.empty: st.table(df_tasks)
+
+        st.subheader("Recent Garden Activity")
+        df_recent = pd.read_sql("SELECT TOP 5 plant_name, status, date_planted FROM Plantings ORDER BY date_planted DESC", engine)
+        st.dataframe(df_recent, use_container_width=True)
+
+    elif menu == "Species Registry":
+        st.title("📖 Master Species Registry")
+        df = pd.read_sql("SELECT * FROM Botanical_Registry", engine)
+        if not df.empty:
+            st.subheader("Species Overview")
+            st.dataframe(df[['species_id', 'common_name', 'plant_category', 'ai_confidence']], use_container_width=True)
+            sel_s = st.selectbox("🔍 Select Species for CRUD / Care Sheet", options=df['common_name'].tolist())
+            if sel_s:
+                row = df[df['common_name'] == sel_s].iloc[0]
+                with st.expander(f"✨ Detailed Care & Edit: {sel_s}", expanded=True):
+                    new_common = st.text_input("Common Name", value=row['common_name'])
+                    new_desc = st.text_area("Description", value=row['description'])
+                    new_water = st.text_input("Watering", value=row['preferred_watering'])
+                    new_fert = st.text_input("Fertilizer", value=row['fertilizer_needs'])
+                    
+                    col1, col2 = st.columns(2)
+                    if col1.button("💾 Save Changes"):
+                        target = db.query(BotanicalRegistry).get(int(row['species_id']))
+                        target.common_name = new_common
+                        target.description = new_desc
+                        target.preferred_watering = new_water
+                        target.fertilizer_needs = new_fert
+                        db.commit()
+                        st.success("Changes saved to SharkEngine!")
+                        st.rerun()
+                    
+                    if col2.button("🗑️ Delete Species"):
+                        db.query(BotanicalRegistry).filter(BotanicalRegistry.species_id == int(row['species_id'])).delete()
+                        db.commit()
+                        st.warning(f"Deleted {sel_s}.")
+                        st.rerun()
+
+                    st.divider()
+                    st.write(f"**Scientific Name:** {row['scientific_name']}")
+                    st.write(f"**Sunlight:** {row['preferred_sunlight']}")
+                    st.write(f"**Confidence:** {row['ai_confidence']:.1%}")
+        else: st.info("Registry empty.")
+
+    elif menu == "Intake Center":
+        st.title("📸 AI Intake & Assignment")
+        t1, t2 = st.tabs(["New AI Intake", "Assign to Location"])
+        with t1:
+            img = st.file_uploader("Upload Plant Photo", type=["jpg","png","jpeg","heic"])
+            if img and st.button("🚀 Process Full Intake"):
+                try:
+                    pil_img = Image.open(img); pil_img = ImageOps.exif_transpose(pil_img)
+                    res = identify_plant(img.getvalue(), simulate=sim_mode)
+                    if res:
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        f_name = f"intake_{ts}.jpg"; f_path = os.path.abspath(os.path.join(MEDIA_DIR, f_name))
+                        pil_img.convert("RGB").save(f_path, "JPEG")
+                        spec = db.query(BotanicalRegistry).filter(BotanicalRegistry.scientific_name == res["scientific_name"]).first()
+                        if not spec:
+                            spec = BotanicalRegistry(common_name=res["common_name"], scientific_name=res["scientific_name"], plant_category=res["plant_category"], description=res["description"], preferred_watering=res["watering"], watering_frequency_days=res["watering_days"], fertilizer_needs=res["fertilizer"], ai_confidence=res["confidence"])
+                            db.add(spec); db.commit(); db.refresh(spec)
+                        new_p = Planting(species_id=spec.species_id, plant_name=res["common_name"], status="Intake", date_planted=datetime.now(UTC))
+                        db.add(new_p); db.commit(); db.refresh(new_p)
+                        db.add(MediaAsset(file_path=f_path, entity_type="Planting", entity_id=new_p.planting_id, ai_confidence=res["confidence"], timestamp=datetime.now(UTC)))
+                        db.commit(); st.balloons(); st.success(f"Saved {res['common_name']}!")
+                except Exception as e: st.error(f"Error: {e}")
+        with t2:
+            unassigned = db.query(Planting).filter(Planting.bed_id == None).all()
+            if unassigned:
+                p_map = {f"{p.plant_name} ({p.planting_id})": p.planting_id for p in unassigned}
+                sel_p = st.selectbox("Select Plant", options=list(p_map.keys()))
+                beds = db.query(GardenBed).all()
+                b_map = {f"{b.name}": b.bed_id for b in beds}
+                sel_b = st.selectbox("Select Target Bed", options=list(b_map.keys()))
+                if st.button("Confirm Assignment"):
+                    plant = db.query(Planting).get(p_map[sel_p]); plant.bed_id = b_map[sel_b]; plant.status = "In Ground"
+                    db.commit(); st.success("Assigned Successfully!"); st.rerun()
+
+    elif menu == "Media Asset CRUD":
+        st.title("📸 Media Asset Control Center")
+        df = pd.read_sql("SELECT media_id, entity_id, ai_confidence, timestamp, file_path FROM Media_Assets", engine)
+        if not df.empty:
+            st.dataframe(df[['media_id', 'entity_id', 'ai_confidence', 'timestamp']], use_container_width=True)
+            sel_id = st.selectbox("Select Photo ID to View/Delete", options=df['media_id'].tolist())
+            row = df[df['media_id'] == sel_id].iloc[0]
+            if os.path.exists(row['file_path']):
+                st.image(ImageOps.exif_transpose(Image.open(row['file_path'])), width=700)
+                if st.button("🗑️ Delete Asset"):
+                    db.query(MediaAsset).filter(MediaAsset.media_id == int(sel_id)).delete()
+                    if os.path.exists(row['file_path']): os.remove(row['file_path'])
+                    db.commit(); st.rerun()
+        else: st.info("No media recorded.")
+
+    elif menu == "Garden Inventory":
+        st.title("📂 Garden Inventory")
+        df_inv = pd.read_sql("SELECT * FROM Plantings", engine)
+        if not df_inv.empty: st.dataframe(df_inv, use_container_width=True)
+        else: st.info("Inventory empty.")
+
+    elif menu == "Property Grid Mapping":
         st.title("🗺️ 10x20 Nano 300 Property Grid")
         
-        # Camera State Management
         if 'camera' not in st.session_state:
             st.session_state.camera = dict(eye=dict(x=1.5, y=1.5, z=1.5))
 
-        # View Buttons
         c1, c2, c3, c4 = st.columns(4)
         if c1.button("📐 Isometric"): st.session_state.camera = dict(eye=dict(x=1.25, y=1.25, z=1.25))
         if c2.button("🔝 Top View"): st.session_state.camera = dict(eye=dict(x=0, y=0, z=2.0))
@@ -105,30 +215,10 @@ def main():
         grid_data = pd.read_sql("SELECT * FROM Property_Grid", engine)
         if not grid_data.empty:
             pivot_df = grid_data.pivot(index='grid_y', columns='grid_x', values='elevation')
-            z_data = pivot_df.values
-            
-            fig = go.Figure(data=[go.Surface(
-                z=z_data, 
-                x=pivot_df.columns, 
-                y=pivot_df.index,
-                colorscale='Viridis', # Professional terrain scale
-                colorbar=dict(title='Elevation (ft)')
-            )])
-            
-            fig.update_layout(
-                title='Property Topography (Current Scan)',
-                scene=dict(
-                    xaxis_title='X (ft)',
-                    yaxis_title='Y (ft)',
-                    zaxis_title='Elevation (ft)',
-                    camera=st.session_state.camera
-                ),
-                margin=dict(l=0, r=0, b=0, t=40),
-                height=700
-            )
+            fig = go.Figure(data=[go.Surface(z=pivot_df.values, x=pivot_df.columns, y=pivot_df.index, colorscale='Viridis')])
+            fig.update_layout(title='Property Topography', scene=dict(camera=st.session_state.camera), margin=dict(l=0, r=0, b=0, t=40), height=700)
             st.plotly_chart(fig, use_container_width=True)
             
-            # --- ARCHITECT'S LEGEND & ROADMAP ---
             st.divider()
             col_left, col_right = st.columns(2)
             
@@ -153,77 +243,22 @@ def main():
                 4. **Google Earth Sync**: Drape this 3D mesh over actual satellite imagery.
                 """)
         else:
-            st.info("Property Grid is currently empty.")
-
-    # (Other pages remain same...)
-    elif menu == "Executive Dashboard":
-        st.title("📊 Overview")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Species", db.query(BotanicalRegistry).count())
-        c2.metric("Plantings", db.query(Planting).count())
-        c3.metric("Photos", db.query(MediaAsset).count())
-        c4.metric("Tasks", db.query(Task).count())
-        
-        st.subheader("🚀 Today's Mission Tasks")
-        df_tasks = pd.read_sql("SELECT name, task_type, priority FROM Tasks WHERE is_completed = 0 ORDER BY priority ASC", engine)
-        if not df_tasks.empty: st.table(df_tasks)
-
-    elif menu == "Species Registry":
-        st.title("📖 Master Species Registry")
-        df = pd.read_sql("SELECT * FROM Botanical_Registry", engine)
-        if not df.empty:
-            st.dataframe(df[['species_id', 'common_name', 'plant_category', 'ai_confidence']], use_container_width=True)
-            sel_s = st.selectbox("🔍 View Detail", options=df['common_name'].tolist())
-            row = df[df['common_name'] == sel_s].iloc[0]
-            with st.expander(f"Care Sheet: {sel_s}", expanded=True):
-                st.write(f"**Scientific Name:** {row['scientific_name']}")
-                st.write(f"**Fertilizer:** {row['fertilizer_needs']}")
-                st.info(row['description'])
-
-    elif menu == "Intake Center":
-        st.title("📸 AI Intake")
-        img = st.file_uploader("Upload Plant Photo", type=["jpg","png","jpeg","heic"])
-        if img and st.button("🚀 Process Full Intake"):
-            try:
-                pil_img = Image.open(img); pil_img = ImageOps.exif_transpose(pil_img)
-                res = identify_plant(img.getvalue(), simulate=sim_mode)
-                if res:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    f_path = os.path.abspath(os.path.join(MEDIA_DIR, f"intake_{ts}.jpg"))
-                    pil_img.convert("RGB").save(f_path, "JPEG")
-                    spec = db.query(BotanicalRegistry).filter(BotanicalRegistry.scientific_name == res["scientific_name"]).first()
-                    if not spec:
-                        spec = BotanicalRegistry(common_name=res["common_name"], scientific_name=res["scientific_name"], plant_category=res["plant_category"], description=res["description"], preferred_watering=res["watering"], watering_frequency_days=res["watering_days"], fertilizer_needs=res["fertilizer"], ai_confidence=res["confidence"])
-                        db.add(spec); db.commit(); db.refresh(spec)
-                    new_p = Planting(species_id=spec.species_id, plant_name=res["common_name"], status="Intake", date_planted=datetime.now(UTC))
-                    db.add(new_p); db.commit(); db.refresh(new_p)
-                    db.add(MediaAsset(file_path=f_path, entity_type="Planting", entity_id=new_p.planting_id, ai_confidence=res["confidence"], timestamp=datetime.now(UTC)))
-                    db.commit(); st.balloons(); st.success(f"Saved {res['common_name']}!")
-            except Exception as e: st.error(f"Error: {e}")
-
-    elif menu == "Media Asset CRUD":
-        st.title("📸 Media Assets")
-        df = pd.read_sql("SELECT * FROM Media_Assets", engine)
-        if not df.empty:
-            st.dataframe(df[['media_id', 'entity_id', 'ai_confidence', 'timestamp']], use_container_width=True)
-            sel_id = st.selectbox("View ID", options=df['media_id'].tolist())
-            row = df[df['media_id'] == sel_id].iloc[0]
-            if os.path.exists(row['file_path']): st.image(row['file_path'], width=600)
-        else: st.info("No media.")
+            st.info("Property Grid data missing on R7910. Run 'seed_data.py' from XPS.")
 
     elif menu == "Lake Data":
-        st.title("🌊 Lake Level")
+        st.title("🌊 Lake Norman Water Level")
         lake_level = get_lake_data(simulate=sim_mode)
-        st.metric(label="Current Level (ft)", value=f"{lake_level:.2f}")
+        if lake_level:
+            st.metric(label="Current Water Level (ft)", value=f"{lake_level:.2f}")
+            st.success("🛰️ Real-time USGS Data Active.")
+        else:
+            sim_level = get_lake_data(simulate=True)
+            st.metric(label="Current Water Level (ft)", value=f"{sim_level:.2f}")
+            st.warning("⚠️ USGS Sensors Offline. Showing architect-simulated level for testing.")
         st.info("Station: MARSHALL STEAM STATION (USGS-02142501)")
 
-    elif menu == "Garden Inventory":
-        st.title("📂 Inventory")
-        df = pd.read_sql("SELECT * FROM Plantings", engine)
-        if not df.empty: st.dataframe(df, use_container_width=True)
-
     elif menu == "Projects & Brainstorm":
-        st.title("📋 Projects")
+        st.title("📋 Project Management")
         df_t = pd.read_sql("SELECT * FROM Tasks", engine)
         if not df_t.empty: st.dataframe(df_t, use_container_width=True)
         with st.expander("💡 Brainstorm New Idea"):
@@ -232,20 +267,20 @@ def main():
                 db.add(Task(name=idea, task_type="Brainstorm")); db.commit(); st.rerun()
 
     elif menu == "Siri Setup":
-        st.title("🎙️ Siri Setup")
+        st.title("🎙️ Siri Voice Setup")
         s_url = f"http://{LOCAL_IP}:5000/brainstorm?thought="
         st.code(s_url); st.image(f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={s_url}")
 
     elif menu == "Infrastructure":
-        st.title("🎛️ Infrastructure")
+        st.title("🎛️ Hardware Infrastructure")
         st.subheader("IoT Hubs")
         st.table(pd.read_sql("SELECT * FROM IoT_Hubs", engine))
         st.subheader("PLC Nodes")
         st.table(pd.read_sql("SELECT * FROM PLC_Nodes", engine))
 
     elif menu == "Admin":
-        st.title("🛠️ Admin")
-        if st.button("🧨 WIPE ALL TABLES"):
+        st.title("🛠️ Admin Tools")
+        if st.button("🧨 FACTORY RESET"):
             db.close(); Base.metadata.drop_all(bind=engine); shutil.rmtree(MEDIA_DIR, ignore_errors=True); os.makedirs(MEDIA_DIR)
             init_db(); st.rerun()
 
