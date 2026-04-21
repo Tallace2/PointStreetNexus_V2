@@ -16,6 +16,9 @@ This document provides a quick reference for common commands and a glossary of t
 | `python export_plant_data.py` | Saves current plant and media metadata to CSV files in the `backups/` folder. |
 | `python import_plant_data.py` | Restores plant and media data from CSV files in the `backups/` folder. |
 | `python -m pip install <package>` | Installs a new Python library (e.g., `pillow-heif`, `sqlalchemy`). |
+| `python seed_it_assets.py` | Populates the IT_Assets and Software_Assets tables. |
+| `python init_mission_tasks.py` | Logs the daily mission goals into the Tasks table. |
+| `python _full_reset_macro.py` | **MACRO**: Runs Export, Reset, Import, Seed, and Mission scripts sequentially. |
 
 ### **PowerShell (Terminal & File Management)**
 | Command | Purpose |
@@ -64,3 +67,4 @@ This document provides a quick reference for common commands and a glossary of t
 | **Push / Pull** | The process of uploading code to (Push) or downloading code from (Pull) GitHub. |
 | **Schema** | The structure or "blueprint" of your database tables and columns. |
 | **CRUD** | **C**reate, **R**ead, **U**pdate, **D**elete - the four basic functions of persistent storage. |
+| **IMS** | Infrastructure Management System (managing IT Assets, Software, Hubs, PLCs). |

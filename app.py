@@ -103,6 +103,7 @@ def main():
         st.subheader("🚀 Today's Mission Tasks")
         df_tasks = pd.read_sql("SELECT name, task_type, priority FROM Tasks WHERE is_completed = 0 ORDER BY priority ASC", engine)
         if not df_tasks.empty: st.table(df_tasks)
+        else: st.info("No active tasks.")
 
         st.subheader("Recent Garden Activity")
         df_recent = pd.read_sql("SELECT TOP 5 plant_name, status, date_planted FROM Plantings ORDER BY date_planted DESC", engine)
