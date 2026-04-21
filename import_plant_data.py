@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from database import SessionLocal
 from models import BotanicalRegistry, Planting, MediaAsset
 import os
@@ -14,11 +15,12 @@ def import_data():
         reg_path = os.path.join(BACKUP_DIR, "botanical_registry_backup.csv")
         if os.path.exists(reg_path):
             df = pd.read_csv(reg_path)
+            df = df.replace({np.nan: None})
             for _, row in df.iterrows():
-                # Check if it already exists to avoid duplicates
-                if not db.query(BotanicalRegistry).filter(BotanicalRegistry.scientific_name == row['scientific_name']).first():
-                    obj = BotanicalRegistry(**row.to_dict())
-                    db.add(obj)
+                # We use db.merge() instead of db.add() so it safely overwrites or inserts
+                # while preserving the exact original species_id.
+                obj = BotanicalRegistry(**row.to_dict())
+                db.merge(obj)
             db.commit()
             print(f"Imported Botanical Registry from {reg_path}")
 
@@ -26,9 +28,11 @@ def import_data():
         plant_path = os.path.join(BACKUP_DIR, "plantings_backup.csv")
         if os.path.exists(plant_path):
             df = pd.read_csv(plant_path)
+            df = df.replace({np.nan: None})
             for _, row in df.iterrows():
+                # Using db.merge() prevents Primary Key collisions if seed_data was already run
                 obj = Planting(**row.to_dict())
-                db.add(obj)
+                db.merge(obj)
             db.commit()
             print(f"Imported Plantings from {plant_path}")
 
@@ -36,9 +40,10 @@ def import_data():
         media_path = os.path.join(BACKUP_DIR, "media_assets_backup.csv")
         if os.path.exists(media_path):
             df = pd.read_csv(media_path)
+            df = df.replace({np.nan: None})
             for _, row in df.iterrows():
                 obj = MediaAsset(**row.to_dict())
-                db.add(obj)
+                db.merge(obj)
             db.commit()
             print(f"Imported Media Assets from {media_path}")
 

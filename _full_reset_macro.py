@@ -16,18 +16,18 @@ if __name__ == "__main__":
     print("=======================================")
     
     # 1. Save data
-    run_script("export_plant_data.py")
+    print("Skipping Export (Backup already exists).")
     
     # 2. Rebuild Database Schema
     run_script("reset_db.py")
     
-    # 3. Restore Data
-    run_script("import_plant_data.py")
-    
-    # 4. Seed Infrastructure
+    # 3. Seed Infrastructure FIRST (This creates GardenBeds for Foreign Keys)
     run_script("seed_data.py")
     run_script("seed_it_assets.py")
     run_script("init_mission_tasks.py")
+    
+    # 4. Restore Plant Data LAST (So Foreign Keys are valid)
+    run_script("import_plant_data.py")
     
     print("\n=======================================")
     print("   MACRO COMPLETE! System Ready.   ")

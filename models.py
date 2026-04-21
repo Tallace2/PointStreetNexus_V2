@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float, Boolean, Text, LargeBinary, Time
 from sqlalchemy.orm import DeclarativeBase, relationship
-from datetime import datetime
+from datetime import datetime, UTC
 
 class Base(DeclarativeBase):
     pass
@@ -68,13 +68,13 @@ class Quote(Base):
     supplier_id = Column(Integer, ForeignKey("Suppliers.supplier_id"))
     part_id = Column(Integer, ForeignKey("Part_Master.part_id"))
     quoted_price = Column(Float)
-    quote_date = Column(DateTime, default=datetime.utcnow)
+    quote_date = Column(DateTime, default=datetime.now(UTC))
 
 class Order(Base):
     __tablename__ = "Orders"
     order_id = Column(Integer, primary_key=True)
     supplier_id = Column(Integer, ForeignKey("Suppliers.supplier_id"))
-    order_date = Column(DateTime, default=datetime.utcnow)
+    order_date = Column(DateTime, default=datetime.now(UTC))
     total_amount = Column(Float)
     status = Column(String(20))
 
@@ -112,6 +112,7 @@ class Task(Base):
     priority = Column(Integer)
     is_completed = Column(Boolean, default=False)
     task_type = Column(String(50))
+    created_at = Column(DateTime, default=datetime.now(UTC)) # Added created_at timestamp
 
 # --- PROPERTY GRID ---
 class PropertyGridNode(Base):
@@ -123,7 +124,7 @@ class PropertyGridNode(Base):
     lidar_intensity = Column(Float)
     latitude = Column(Float)
     longitude = Column(Float)
-    last_scan_date = Column(DateTime, default=datetime.utcnow)
+    last_scan_date = Column(DateTime, default=datetime.now(UTC))
     scan_device = Column(String(100))
 
 # --- IOT & AUTOMATION ---
@@ -201,13 +202,13 @@ class Planting(Base):
     health_score = Column(Integer)
     latitude = Column(Float)
     longitude = Column(Float)
-    date_planted = Column(DateTime, default=datetime.utcnow)
+    date_planted = Column(DateTime, default=datetime.now(UTC))
 
 class SensorReading(Base):
     __tablename__ = "Sensor_Readings"
     reading_id = Column(Integer, primary_key=True)
     sensor_id = Column(String(100), ForeignKey("Sensor_Nodes.sensor_id"))
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=datetime.now(UTC))
     soil_moisture = Column(Float)
     temperature = Column(Float)
 
@@ -225,7 +226,7 @@ class MediaAsset(Base):
     file_path = Column(String(500))
     entity_type = Column(String(50))
     entity_id = Column(Integer)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=datetime.now(UTC))
     ai_confidence = Column(Float)
     latitude = Column(Float)
     longitude = Column(Float)

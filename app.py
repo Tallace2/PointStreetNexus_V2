@@ -16,7 +16,7 @@ import socket
 from PIL import Image, ImageOps
 
 # Version Configuration
-VERSION = "V2.4.0" # Major version bump for IMS features
+VERSION = "V2.4.5" # Minor bump for task loading fix
 
 # Support for HEIC
 try:
@@ -95,57 +95,86 @@ def main():
     if menu == "Executive Dashboard":
         st.title("📊 Point Street Nexus Overview")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Species", db.query(BotanicalRegistry).count())
-        c2.metric("Plantings", db.query(Planting).count())
-        c3.metric("Photos", db.query(MediaAsset).count())
-        c4.metric("Active Tasks", db.query(Task).filter(Task.is_completed == False).count())
+        
+        # Robust metric fetching
+        try:
+            c1.metric("Species", db.query(BotanicalRegistry).count())
+        except Exception as e:
+            c1.metric("Species", "Error")
+            st.error(f"DB Error: {e}")
+            
+        try:
+            c2.metric("Plantings", db.query(Planting).count())
+        except:
+            c2.metric("Plantings", "Error")
+            
+        try:
+            c3.metric("Photos", db.query(MediaAsset).count())
+        except:
+            c3.metric("Photos", "Error")
+            
+        try:
+            c4.metric("Active Tasks", db.query(Task).filter(Task.is_completed == False).count())
+        except:
+            c4.metric("Active Tasks", "Error")
         
         st.subheader("🚀 Today's Mission Tasks")
-        df_tasks = pd.read_sql("SELECT name, task_type, priority FROM Tasks WHERE is_completed = 0 ORDER BY priority ASC", engine)
-        if not df_tasks.empty: st.table(df_tasks)
-        else: st.info("No active tasks.")
+        try:
+            # Reverted to basic SELECT to avoid 'created_at' issues if not fully synced
+            df_tasks = pd.read_sql("SELECT name, task_type, priority FROM Tasks WHERE is_completed = 0 ORDER BY priority ASC", engine)
+            if not df_tasks.empty: st.table(df_tasks)
+            else: st.info("No active tasks.")
+        except Exception as e:
+            st.error(f"Error reading Tasks table. {e}")
 
         st.subheader("Recent Garden Activity")
-        df_recent = pd.read_sql("SELECT TOP 5 plant_name, status, date_planted FROM Plantings ORDER BY date_planted DESC", engine)
-        st.dataframe(df_recent, use_container_width=True)
+        try:
+            df_recent = pd.read_sql("SELECT TOP 5 plant_name, status, date_planted FROM Plantings ORDER BY date_planted DESC", engine)
+            if not df_recent.empty: st.dataframe(df_recent, use_container_width=True)
+            else: st.info("No recent activity.")
+        except:
+             st.error("Error reading Plantings table.")
 
     elif menu == "Species Registry":
         st.title("📖 Master Species Registry")
-        df = pd.read_sql("SELECT * FROM Botanical_Registry", engine)
-        if not df.empty:
-            st.subheader("Species Overview")
-            st.dataframe(df[['species_id', 'common_name', 'plant_category', 'ai_confidence']], use_container_width=True)
-            sel_s = st.selectbox("🔍 View Detail", options=df['common_name'].tolist())
-            if sel_s:
-                row = df[df['common_name'] == sel_s].iloc[0]
-                with st.expander(f"✨ Detailed Care & Edit: {sel_s}", expanded=True):
-                    new_common = st.text_input("Common Name", value=row['common_name'])
-                    new_desc = st.text_area("Description", value=row['description'])
-                    new_water = st.text_input("Watering", value=row['preferred_watering'])
-                    new_fert = st.text_input("Fertilizer", value=row['fertilizer_needs'])
-                    
-                    col1, col2 = st.columns(2)
-                    if col1.button("💾 Save Changes"):
-                        target = db.query(BotanicalRegistry).get(int(row['species_id']))
-                        target.common_name = new_common
-                        target.description = new_desc
-                        target.preferred_watering = new_water
-                        target.fertilizer_needs = new_fert
-                        db.commit()
-                        st.success("Changes saved to SharkEngine!")
-                        st.rerun()
-                    
-                    if col2.button("🗑️ Delete Species"):
-                        db.query(BotanicalRegistry).filter(BotanicalRegistry.species_id == int(row['species_id'])).delete()
-                        db.commit()
-                        st.warning(f"Deleted {sel_s}.")
-                        st.rerun()
+        try:
+            df = pd.read_sql("SELECT * FROM Botanical_Registry", engine)
+            if not df.empty:
+                st.subheader("Species Overview")
+                st.dataframe(df[['species_id', 'common_name', 'plant_category', 'ai_confidence']], use_container_width=True)
+                sel_s = st.selectbox("🔍 View Detail", options=df['common_name'].tolist())
+                if sel_s:
+                    row = df[df['common_name'] == sel_s].iloc[0]
+                    with st.expander(f"✨ Detailed Care & Edit: {sel_s}", expanded=True):
+                        new_common = st.text_input("Common Name", value=row['common_name'])
+                        new_desc = st.text_area("Description", value=row['description'])
+                        new_water = st.text_input("Watering", value=row['preferred_watering'])
+                        new_fert = st.text_input("Fertilizer", value=row['fertilizer_needs'])
+                        
+                        col1, col2 = st.columns(2)
+                        if col1.button("💾 Save Changes"):
+                            target = db.query(BotanicalRegistry).get(int(row['species_id']))
+                            target.common_name = new_common
+                            target.description = new_desc
+                            target.preferred_watering = new_water
+                            target.fertilizer_needs = new_fert
+                            db.commit()
+                            st.success("Changes saved to SharkEngine!")
+                            st.rerun()
+                        
+                        if col2.button("🗑️ Delete Species"):
+                            db.query(BotanicalRegistry).filter(BotanicalRegistry.species_id == int(row['species_id'])).delete()
+                            db.commit()
+                            st.warning(f"Deleted {sel_s}.")
+                            st.rerun()
 
-                    st.divider()
-                    st.write(f"**Scientific Name:** {row['scientific_name']}")
-                    st.write(f"**Sunlight:** {row['preferred_sunlight']}")
-                    st.write(f"**Confidence:** {row['ai_confidence']:.1%}")
-        else: st.info("Registry empty.")
+                        st.divider()
+                        st.write(f"**Scientific Name:** {row['scientific_name']}")
+                        st.write(f"**Sunlight:** {row['preferred_sunlight']}")
+                        st.write(f"**Confidence:** {row['ai_confidence']:.1%}")
+            else: st.info("Registry empty.")
+        except Exception as e:
+            st.error(f"Database error: {e}")
 
     elif menu == "Intake Center":
         st.title("📸 AI Intake & Assignment")
@@ -170,37 +199,47 @@ def main():
                         db.commit(); st.balloons(); st.success(f"Saved {res['common_name']}!")
                 except Exception as e: st.error(f"Error: {e}")
         with t2:
-            unassigned = db.query(Planting).filter(Planting.bed_id == None).all()
-            if unassigned:
-                p_map = {f"{p.plant_name} ({p.planting_id})": p.planting_id for p in unassigned}
-                sel_p = st.selectbox("Select Plant", options=list(p_map.keys()))
-                beds = db.query(GardenBed).all()
-                b_map = {f"{b.name}": b.bed_id for b in beds}
-                sel_b = st.selectbox("Select Target Bed", options=list(b_map.keys()))
-                if st.button("Confirm Assignment"):
-                    plant = db.query(Planting).get(p_map[sel_p]); plant.bed_id = b_map[sel_b]; plant.status = "In Ground"
-                    db.commit(); st.success("Assigned Successfully!"); st.rerun()
+            try:
+                unassigned = db.query(Planting).filter(Planting.bed_id == None).all()
+                if unassigned:
+                    p_map = {f"{p.plant_name} ({p.planting_id})": p.planting_id for p in unassigned}
+                    sel_p = st.selectbox("Select Plant", options=list(p_map.keys()))
+                    beds = db.query(GardenBed).all()
+                    b_map = {f"{b.name}": b.bed_id for b in beds}
+                    sel_b = st.selectbox("Select Target Bed", options=list(b_map.keys()))
+                    if st.button("Confirm Assignment"):
+                        plant = db.query(Planting).get(p_map[sel_p]); plant.bed_id = b_map[sel_b]; plant.status = "In Ground"
+                        db.commit(); st.success("Assigned Successfully!"); st.rerun()
+                else: st.info("No unassigned plants.")
+            except Exception as e:
+                st.error(f"Database error: {e}")
 
     elif menu == "Media Asset CRUD":
         st.title("📸 Media Asset Control Center")
-        df = pd.read_sql("SELECT media_id, entity_id, ai_confidence, timestamp, file_path FROM Media_Assets", engine)
-        if not df.empty:
-            st.dataframe(df[['media_id', 'entity_id', 'ai_confidence', 'timestamp']], use_container_width=True)
-            sel_id = st.selectbox("Select Photo ID to View/Delete", options=df['media_id'].tolist())
-            row = df[df['media_id'] == sel_id].iloc[0]
-            if os.path.exists(row['file_path']):
-                st.image(ImageOps.exif_transpose(Image.open(row['file_path'])), width=700)
-                if st.button("🗑️ Delete Asset"):
-                    db.query(MediaAsset).filter(MediaAsset.media_id == int(sel_id)).delete()
-                    if os.path.exists(row['file_path']): os.remove(row['file_path'])
-                    db.commit(); st.rerun()
-        else: st.info("No media recorded.")
+        try:
+            df = pd.read_sql("SELECT media_id, entity_id, ai_confidence, timestamp, file_path FROM Media_Assets", engine)
+            if not df.empty:
+                st.dataframe(df[['media_id', 'entity_id', 'ai_confidence', 'timestamp']], use_container_width=True)
+                sel_id = st.selectbox("Select Photo ID to View/Delete", options=df['media_id'].tolist())
+                row = df[df['media_id'] == sel_id].iloc[0]
+                if os.path.exists(row['file_path']):
+                    st.image(ImageOps.exif_transpose(Image.open(row['file_path'])), width=700)
+                    if st.button("🗑️ Delete Asset"):
+                        db.query(MediaAsset).filter(MediaAsset.media_id == int(sel_id)).delete()
+                        if os.path.exists(row['file_path']): os.remove(row['file_path'])
+                        db.commit(); st.rerun()
+            else: st.info("No media recorded.")
+        except:
+            st.error("Error reading Media_Assets table.")
 
     elif menu == "Garden Inventory":
         st.title("📂 Garden Inventory")
-        df_inv = pd.read_sql("SELECT * FROM Plantings", engine)
-        if not df_inv.empty: st.dataframe(df_inv, use_container_width=True)
-        else: st.info("Inventory empty.")
+        try:
+            df_inv = pd.read_sql("SELECT * FROM Plantings", engine)
+            if not df_inv.empty: st.dataframe(df_inv, use_container_width=True)
+            else: st.info("Inventory empty.")
+        except:
+            st.error("Error reading Plantings table.")
 
     elif menu == "Property Grid Mapping":
         st.title("🗺️ 10x20 Nano 300 Property Grid")
@@ -214,38 +253,41 @@ def main():
         if c3.button("⬅️ Side View"): st.session_state.camera = dict(eye=dict(x=2.0, y=0, z=0))
         if c4.button("⬆️ Front View"): st.session_state.camera = dict(eye=dict(x=0, y=2.0, z=0))
 
-        grid_data = pd.read_sql("SELECT * FROM Property_Grid", engine)
-        if not grid_data.empty:
-            pivot_df = grid_data.pivot(index='grid_y', columns='grid_x', values='elevation')
-            fig = go.Figure(data=[go.Surface(z=pivot_df.values, x=pivot_df.columns, y=pivot_df.index, colorscale='Viridis')])
-            fig.update_layout(title='Property Topography', scene=dict(camera=st.session_state.camera), margin=dict(l=0, r=0, b=0, t=40), height=700)
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.divider()
-            col_left, col_right = st.columns(2)
-            
-            with col_left:
-                st.subheader("🔥 Understanding the Heatmap")
-                st.write("""
-                The colors represent **Elevation (Z-Axis)**:
-                - **Purple/Dark Blue**: Lowest points of the property.
-                - **Teal/Green**: Median grade level.
-                - **Yellow/Gold**: High points (ideal for solar or vantage points).
-                """)
-            
-            with col_right:
-                st.subheader("🛰️ Mapping Roadmap")
-                st.info("""
-                **Currently Displaying**: 10x20 Coarse Topography (Sample Nodes).
+        try:
+            grid_data = pd.read_sql("SELECT * FROM Property_Grid", engine)
+            if not grid_data.empty:
+                pivot_df = grid_data.pivot(index='grid_y', columns='grid_x', values='elevation')
+                fig = go.Figure(data=[go.Surface(z=pivot_df.values, x=pivot_df.columns, y=pivot_df.index, colorscale='Viridis')])
+                fig.update_layout(title='Property Topography', scene=dict(camera=st.session_state.camera), margin=dict(l=0, r=0, b=0, t=40), height=700)
+                st.plotly_chart(fig, use_container_width=True)
                 
-                **Coming Soon**:
-                1. **LiDAR Overlay**: Millions of points for precise tree-line and structure detection.
-                2. **Nano 300 Integration**: Sub-centimeter GPS accuracy for node placement.
-                3. **360° Pano Bubbles**: Click a grid node to see a high-res iPhone panorama from that spot.
-                4. **Google Earth Sync**: Drape this 3D mesh over actual satellite imagery.
-                """)
-        else:
-            st.info("Property Grid data missing on R7910. Run 'seed_data.py' from XPS.")
+                st.divider()
+                col_left, col_right = st.columns(2)
+                
+                with col_left:
+                    st.subheader("🔥 Understanding the Heatmap")
+                    st.write("""
+                    The colors represent **Elevation (Z-Axis)**:
+                    - **Purple/Dark Blue**: Lowest points of the property.
+                    - **Teal/Green**: Median grade level.
+                    - **Yellow/Gold**: High points (ideal for solar or vantage points).
+                    """)
+                
+                with col_right:
+                    st.subheader("🛰️ Mapping Roadmap")
+                    st.info("""
+                    **Currently Displaying**: 10x20 Coarse Topography (Sample Nodes).
+                    
+                    **Coming Soon**:
+                    1. **LiDAR Overlay**: Millions of points for precise tree-line and structure detection.
+                    2. **Nano 300 Integration**: Sub-centimeter GPS accuracy for node placement.
+                    3. **360° Pano Bubbles**: Click a grid node to see a high-res iPhone panorama from that spot.
+                    4. **Google Earth Sync**: Drape this 3D mesh over actual satellite imagery.
+                    """)
+            else:
+                st.info("Property Grid data missing on R7910. Run 'seed_data.py' from XPS.")
+        except:
+             st.error("Error reading Property_Grid table.")
 
     elif menu == "Lake Data":
         st.title("🌊 Lake Norman Water Level")
@@ -261,12 +303,16 @@ def main():
 
     elif menu == "Projects & Brainstorm":
         st.title("📋 Project Management")
-        df_t = pd.read_sql("SELECT * FROM Tasks", engine)
-        if not df_t.empty: st.dataframe(df_t, use_container_width=True)
-        with st.expander("💡 Brainstorm New Idea"):
-            idea = st.text_input("Thought")
-            if st.button("Save"):
-                db.add(Task(name=idea, task_type="Brainstorm")); db.commit(); st.rerun()
+        try:
+            df_t = pd.read_sql("SELECT * FROM Tasks", engine)
+            if not df_t.empty: st.dataframe(df_t, use_container_width=True)
+            else: st.info("No projects or tasks found.")
+            with st.expander("💡 Brainstorm New Idea"):
+                idea = st.text_input("Thought")
+                if st.button("Save"):
+                    db.add(Task(name=idea, task_type="Brainstorm")); db.commit(); st.rerun()
+        except:
+             st.error("Error reading Tasks table.")
 
     elif menu == "Siri Setup":
         st.title("🎙️ Siri Voice Setup")
@@ -276,19 +322,29 @@ def main():
     elif menu == "Infrastructure":
         st.title("🎛️ Hardware Infrastructure")
         st.subheader("IT Assets")
-        df_it = pd.read_sql("SELECT * FROM IT_Assets", engine)
-        if not df_it.empty: st.dataframe(df_it, use_container_width=True)
-        else: st.info("No IT Assets found. Run 'seed_it_assets.py'.")
+        try:
+            df_it = pd.read_sql("SELECT * FROM IT_Assets", engine)
+            if not df_it.empty: st.dataframe(df_it, use_container_width=True)
+            else: st.info("No IT Assets found. Run 'seed_it_assets.py'.")
+        except:
+            st.error("Error reading IT_Assets table.")
         
         st.subheader("Software Assets")
-        df_sw = pd.read_sql("SELECT * FROM Software_Assets", engine)
-        if not df_sw.empty: st.dataframe(df_sw, use_container_width=True)
-        else: st.info("No Software Assets found. Run 'seed_it_assets.py'.")
+        try:
+            df_sw = pd.read_sql("SELECT * FROM Software_Assets", engine)
+            if not df_sw.empty: st.dataframe(df_sw, use_container_width=True)
+            else: st.info("No Software Assets found. Run 'seed_it_assets.py'.")
+        except:
+            st.error("Error reading Software_Assets table.")
 
         st.subheader("IoT Hubs")
-        st.table(pd.read_sql("SELECT * FROM IoT_Hubs", engine))
+        try:
+            st.table(pd.read_sql("SELECT * FROM IoT_Hubs", engine))
+        except: pass
         st.subheader("PLC Nodes")
-        st.table(pd.read_sql("SELECT * FROM PLC_Nodes", engine))
+        try:
+            st.table(pd.read_sql("SELECT * FROM PLC_Nodes", engine))
+        except: pass
 
     elif menu == "Admin":
         st.title("🛠️ Admin Tools")
