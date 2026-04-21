@@ -5,6 +5,29 @@ from datetime import datetime
 class Base(DeclarativeBase):
     pass
 
+# --- IT & INFRASTRUCTURE ---
+class ITAsset(Base):
+    __tablename__ = "IT_Assets"
+    asset_id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    type = Column(String(50)) # Server, Laptop, Mobile, PLC, IoT
+    model = Column(String(100))
+    ip_address = Column(String(50))
+    mac_address = Column(String(50))
+    location = Column(String(100))
+    status = Column(String(20)) # Online, Offline, Maintenance
+    purchase_date = Column(DateTime)
+    notes = Column(Text)
+
+class SoftwareAsset(Base):
+    __tablename__ = "Software_Assets"
+    software_id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    version = Column(String(50))
+    license_key = Column(String(200))
+    installed_on = Column(Integer, ForeignKey("IT_Assets.asset_id"))
+    vendor = Column(String(100))
+
 # --- CONTACTS & SUPPLY CHAIN ---
 class Contact(Base):
     __tablename__ = "Contacts"
@@ -173,9 +196,9 @@ class Planting(Base):
     bed_id = Column(Integer, ForeignKey("Garden_Beds.bed_id"), nullable=True)
     species_id = Column(Integer, ForeignKey("Botanical_Registry.species_id"), nullable=True)
     plant_name = Column(String(100))
-    variety = Column(String(100)) # Added variety
+    variety = Column(String(100))
     status = Column(String(50))
-    health_score = Column(Integer) # Added health_score
+    health_score = Column(Integer)
     latitude = Column(Float)
     longitude = Column(Float)
     date_planted = Column(DateTime, default=datetime.utcnow)

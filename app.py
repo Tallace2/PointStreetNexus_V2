@@ -5,7 +5,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from database import SessionLocal, engine, init_db, SERVER
 from models import (Base, GardenBed, SensorReading, Planting, Task, BotanicalRegistry, 
-                   IoTHub, PLCNode, PLCTag, Project, MediaAsset, PropertyGridNode)
+                   IoTHub, PLCNode, PLCTag, Project, MediaAsset, PropertyGridNode,
+                   ITAsset, SoftwareAsset) # Import new models
 from datetime import datetime, UTC, timedelta
 import os
 import requests
@@ -15,7 +16,7 @@ import socket
 from PIL import Image, ImageOps
 
 # Version Configuration
-VERSION = "V2.3.2" # Updated version number
+VERSION = "V2.4.0" # Major version bump for IMS features
 
 # Support for HEIC
 try:
@@ -34,7 +35,7 @@ st.set_page_config(page_title=f"PSN Architect {VERSION}", layout="wide", initial
 st.markdown(f"""
     <style>
     .main {{ background-color: #f0f2f6; }}
-    .stMetric {{ background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #d1d5db; box-shadow: 2px 2px 5px rgba(0,0/0,0.05); }}
+    .stMetric {{ background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #d1d5db; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }}
     h1, h2, h3 {{ color: #003366; font-family: 'Segoe UI', sans-serif; }}
     .stButton>button {{ background-color: #003366; color: white; border-radius: 8px; height: 3em; }}
     /* Mobile Table Fix */
@@ -113,7 +114,7 @@ def main():
         if not df.empty:
             st.subheader("Species Overview")
             st.dataframe(df[['species_id', 'common_name', 'plant_category', 'ai_confidence']], use_container_width=True)
-            sel_s = st.selectbox("🔍 Select Species for CRUD / Care Sheet", options=df['common_name'].tolist())
+            sel_s = st.selectbox("🔍 View Detail", options=df['common_name'].tolist())
             if sel_s:
                 row = df[df['common_name'] == sel_s].iloc[0]
                 with st.expander(f"✨ Detailed Care & Edit: {sel_s}", expanded=True):
@@ -273,6 +274,16 @@ def main():
 
     elif menu == "Infrastructure":
         st.title("🎛️ Hardware Infrastructure")
+        st.subheader("IT Assets")
+        df_it = pd.read_sql("SELECT * FROM IT_Assets", engine)
+        if not df_it.empty: st.dataframe(df_it, use_container_width=True)
+        else: st.info("No IT Assets found. Run 'seed_it_assets.py'.")
+        
+        st.subheader("Software Assets")
+        df_sw = pd.read_sql("SELECT * FROM Software_Assets", engine)
+        if not df_sw.empty: st.dataframe(df_sw, use_container_width=True)
+        else: st.info("No Software Assets found. Run 'seed_it_assets.py'.")
+
         st.subheader("IoT Hubs")
         st.table(pd.read_sql("SELECT * FROM IoT_Hubs", engine))
         st.subheader("PLC Nodes")
