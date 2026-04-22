@@ -14,10 +14,11 @@ import requests
 import base64
 import shutil
 import socket
+import io
 from PIL import Image, ImageOps
 
 # Version Configuration
-VERSION = "V3.1 (UI Sprint 1)"
+VERSION = "V3.4 (Sprint 2 - Hotkeys & Analytics)"
 
 # Support for HEIC
 try:
@@ -25,6 +26,13 @@ try:
     register_heif_opener()
 except ImportError:
     pass
+
+# Support for Text-to-Speech (Voice Feedback)
+try:
+    from gtts import gTTS
+    HAS_TTS = True
+except ImportError:
+    HAS_TTS = False
 
 # Import the lake data collector
 from lake_collector import get_lake_data
@@ -46,6 +54,7 @@ st.markdown(f"""
 
 # --- DIRECTORY SETUP ---
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
 DATA_DIR = os.path.join(BASE_DIR, "02_Data")
 MEDIA_DIR = os.path.join(DATA_DIR, "Media")
 
@@ -53,11 +62,11 @@ MEDIA_SUBDIRS = {
     "Plantings": os.path.join(MEDIA_DIR, "plantings"),
     "Property": os.path.join(MEDIA_DIR, "property_anchors"),
     "Lidar": os.path.join(MEDIA_DIR, "lidar_scans"),
-    "Projects": os.path.join(MEDIA_DIR, "projects")
+    "Projects": os.path.join(MEDIA_DIR, "projects"),
+    "Inventory": os.path.join(MEDIA_DIR, "inventory")
 }
 
-TEMP_DIR = os.path.join(BASE_DIR, "04_Temp")
-QUEUE_DIR = os.path.join(TEMP_DIR, "intake_queue")
+QUEUE_DIR = os.path.join(BASE_DIR, "04_Temp", "intake_queue")
 AUTO_DIR = os.path.join(BASE_DIR, "03_Automation")
 
 for d in MEDIA_SUBDIRS.values(): os.makedirs(d, exist_ok=True)
@@ -82,26 +91,81 @@ LOCAL_IP = get_local_ip()
 def identify_plant(image_bytes, simulate=False):
     if simulate:
         return {"scientific_name": "Acer palmatum", "common_name": "Mock Japanese Maple", "description": "Simulation mode active.", "plant_category": "Trees", "watering": "Medium", "watering_days": 4, "sunlight": "Partial Shade", "soil": "Well-drained", "fertilizer": "10-10-10", "growth_rate": "Moderate", "confidence": 0.99}
+    
     key = st.session_state['api_key']
-    if not key: return None
+    if not key: 
+        st.error("❌ Plant.id API Key is missing! Please add it in the sidebar.")
+        return None
+        
     b64 = base64.b64encode(image_bytes).decode("ascii")
     url = "https://api.plant.id/v2/identify"
-    payload = {"api_key": key, "images": [b64], "modifiers": ["crops_fast"], "plant_details": ["common_names", "watering", "sunlight", "taxonomy", "description", "soil", "growth_rate"]}
+    
+    headers = {
+        "Api-Key": key,
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "images": [b64], 
+        "modifiers": ["crops_fast"], 
+        "plant_details": ["common_names", "watering", "sunlight", "taxonomy", "description", "soil", "growth_rate"]
+    }
+    
     try:
-        resp = requests.post(url, json=payload, timeout=20)
-        data = resp.json()
-        if data.get("suggestions"):
+        # Increased timeout to 60s for large uploads on slower networks
+        resp = requests.post(url, json=payload, headers=headers, timeout=60)
+        
+        try:
+            data = resp.json()
+        except requests.exceptions.JSONDecodeError:
+            st.error(f"Plant.id API Error (Not JSON) {resp.status_code}: {resp.text}")
+            return None
+
+        if resp.status_code != 200:
+            st.error(f"Plant.id API Error {resp.status_code}: {data}")
+            return None
+            
+        if isinstance(data, dict) and data.get("suggestions"):
             best = data["suggestions"][0]
-            det = best.get("plant_details", {})
-            w = det.get("watering", {}).get("max", 2)
-            return {"scientific_name": best.get("plant_name", "Unknown"), "common_name": det.get("common_names", ["Unknown"])[0] if det.get("common_names") else "Unknown", "description": det.get("description", {}).get("value", "No description."), "plant_category": det.get("taxonomy", {}).get("order", "Biological"), "watering": {1:"Low", 2:"Medium", 3:"High"}.get(w, "Medium"), "watering_days": det.get("watering", {}).get("min", 7), "sunlight": str(det.get("sunlight", {}).get("description", "Partial Sun")), "soil": str(det.get("soil", {}).get("description", "Well-Drained")), "fertilizer": "Monthly Standard", "growth_rate": det.get("growth_rate", "Moderate"), "confidence": float(best.get("probability", 0))}
-    except: return None
+            # Safely handle missing plant_details by defaulting to an empty dict
+            det = best.get("plant_details") or {}
+            w = det.get("watering") or {}
+            w_max = w.get("max", 2)
+            
+            return {
+                "scientific_name": best.get("plant_name", "Unknown"), 
+                "common_name": (det.get("common_names") or ["Unknown"])[0] if det.get("common_names") else "Unknown", 
+                "description": (det.get("description") or {}).get("value", "No description."), 
+                "plant_category": (det.get("taxonomy") or {}).get("order", "Biological"), 
+                "watering": {1:"Low", 2:"Medium", 3:"High"}.get(w_max, "Medium"), 
+                "watering_days": w.get("min", 7), 
+                "sunlight": str((det.get("sunlight") or {}).get("description", "Partial Sun")), 
+                "soil": str((det.get("soil") or {}).get("description", "Well-Drained")),
+                "fertilizer": "Monthly Standard", 
+                "growth_rate": det.get("growth_rate", "Moderate"), 
+                "confidence": float(best.get("probability", 0))
+            }
+    except Exception as e: 
+        st.error(f"API Connection Exception: {e}")
+        return None
     return None
+
+def generate_audio(text):
+    """Generate audio bytes from text using gTTS"""
+    if not HAS_TTS or not text:
+        return None
+    try:
+        tts = gTTS(text=text, lang='en', slow=False)
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        return fp.getvalue()
+    except Exception as e:
+        st.error(f"TTS Error: {e}")
+        return None
 
 def main():
     st.sidebar.title(f"🌿 PSN Architect {VERSION}")
     
-    # --- SPRINT 1: CATEGORIZED NAVIGATION ---
     category = st.sidebar.selectbox("📂 Category", [
         "🌱 Horticulture", 
         "📦 Operations", 
@@ -117,14 +181,22 @@ def main():
     elif category == "🗺️ Spatial":
         menu = st.sidebar.radio("Navigation", ["Property Grid Mapping", "Property Zones"])
     elif category == "📈 Analytics":
-        menu = st.sidebar.radio("Navigation", ["Lake Data"])
+        menu = st.sidebar.radio("Navigation", ["Lake Data", "Sensor Diagnostics"])
     elif category == "⚙️ System":
         menu = st.sidebar.radio("Navigation", ["System Glossary", "Infrastructure", "Siri Setup", "Admin"])
 
     sim_mode = st.sidebar.toggle("Simulate AI & Data", value=True)
     st.sidebar.divider()
     st.sidebar.info(f"🌐 Server: {SERVER}")
-    st.sidebar.caption(f"📁 Media Path: 02_Data/Media")
+    
+    st.sidebar.caption(f"📁 Target Queue:\n{QUEUE_DIR}")
+
+    st.sidebar.divider()
+    new_key = st.sidebar.text_input("Plant.id API Key", value=st.session_state['api_key'], type="password")
+    if st.sidebar.button("💾 Save API Key"):
+        with open(KEY_FILE, "w") as f: f.write(new_key)
+        st.session_state['api_key'] = new_key
+        st.sidebar.success("Key Locked.")
 
     db = SessionLocal()
 
@@ -143,18 +215,48 @@ def main():
         
         st.subheader("🚀 Today's Mission Tasks")
         try:
-            df_tasks = pd.read_sql("SELECT name as Task, task_type as Category, priority as Priority FROM Tasks WHERE is_completed = 0 ORDER BY priority ASC", engine)
-            if not df_tasks.empty: 
-                st.dataframe(df_tasks, use_container_width=True, hide_index=True)
+            df_tasks = pd.read_sql("SELECT task_id, name as Task, task_type as Category, priority as Priority, is_completed as Done FROM Tasks WHERE is_completed = 0 ORDER BY priority ASC", engine)
+            if not df_tasks.empty:
+                st.info("💡 Hotkey Support: Use Tab and Arrow Keys to navigate. Press Space to toggle 'Done'.")
+                # SPRINT 2: Editable Tasks Table!
+                edited_df = st.data_editor(
+                    df_tasks,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "task_id": None, # Hide ID
+                        "Done": st.column_config.CheckboxColumn("Done", default=False),
+                        "Priority": st.column_config.NumberColumn(format="%d")
+                    },
+                    disabled=["Task", "Category", "Priority"],
+                    key="task_editor"
+                )
+                
+                # Check for completed tasks and update SQL
+                completed_tasks = edited_df[edited_df['Done'] == True]
+                if not completed_tasks.empty:
+                    for idx, row in completed_tasks.iterrows():
+                        t_id = row['task_id']
+                        db_task = db.query(Task).get(int(t_id))
+                        db_task.is_completed = True
+                    db.commit()
+                    st.success("Tasks marked complete! Refreshing...")
+                    st.rerun()
             else: st.info("No active tasks.")
         except Exception as e:
             st.error(f"Error reading Tasks table: {e}")
 
         st.subheader("Recent Garden Activity")
         try:
-            df_recent = pd.read_sql("SELECT plant_name as Plant, status as Status, date_planted as Date FROM Plantings ORDER BY date_planted DESC", engine)
+            # SPRINT 2: Added more context to recent activity
+            query = """
+                SELECT p.plant_name as Plant, b.name as Location, p.health_score as Health, p.date_planted as Date 
+                FROM Plantings p
+                LEFT JOIN Garden_Beds b ON p.bed_id = b.bed_id
+                ORDER BY p.date_planted DESC
+            """
+            df_recent = pd.read_sql(query, engine)
             if not df_recent.empty: 
-                # Professional formatting
                 st.dataframe(df_recent, use_container_width=True, hide_index=True, column_config={
                     "Date": st.column_config.DatetimeColumn("Date Planted", format="MMM DD, YYYY")
                 })
@@ -164,11 +266,26 @@ def main():
 
     elif menu == "System Glossary":
         st.title("📖 System Glossary & Acronyms")
-        st.info("Reference for all Point Street Nexus terminology.")
+        st.info("Reference for all Point Street Nexus terminology. Double-click cells to edit.")
         try:
-            df_gloss = pd.read_sql("SELECT acronym as Acronym, term as Term, definition as Definition FROM System_Glossary ORDER BY acronym ASC", engine)
+            df_gloss = pd.read_sql("SELECT term_id, acronym as Acronym, term as Term, definition as Definition FROM System_Glossary ORDER BY acronym ASC", engine)
             if not df_gloss.empty:
-                st.dataframe(df_gloss, use_container_width=True, hide_index=True)
+                edited_gloss = st.data_editor(
+                    df_gloss, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={"term_id": None}
+                )
+                
+                if st.button("💾 Save Glossary Edits"):
+                    for idx, row in edited_gloss.iterrows():
+                        db.query(SystemGlossary).filter(SystemGlossary.term_id == int(row['term_id'])).update({
+                            "acronym": row['Acronym'],
+                            "term": row['Term'],
+                            "definition": row['Definition']
+                        })
+                    db.commit()
+                    st.success("Glossary updated!")
             else: st.info("Glossary is empty. Run seed_data.py.")
             
             with st.expander("➕ Add New Term"):
@@ -212,13 +329,12 @@ def main():
              st.error(f"Error reading Zone data: {e}")
 
     elif menu == "Species Registry":
-        st.title("📖 Master Species Registry")
+        st.title("📖 Master Botanical Library")
         try:
             df = pd.read_sql("SELECT * FROM Botanical_Registry", engine)
             if not df.empty:
-                st.subheader("Species Overview")
+                st.subheader("Library Index")
                 
-                # Upgraded Data Grid with Column Config
                 st.dataframe(
                     df[['species_id', 'common_name', 'plant_category', 'ai_confidence']], 
                     use_container_width=True,
@@ -238,35 +354,67 @@ def main():
                 )
                 
                 st.divider()
-                st.subheader("📝 Deep Dive & Edit")
-                sel_s = st.selectbox("Select a Species to view Care Sheet or edit details:", options=df['common_name'].tolist())
+                st.subheader("📝 Botanical Profile")
+                sel_s = st.selectbox("Search Library:", options=df['common_name'].tolist())
                 if sel_s:
                     row = df[df['common_name'] == sel_s].iloc[0]
-                    with st.expander(f"✨ Care Sheet: {sel_s}", expanded=True):
-                        new_common = st.text_input("Common Name", value=row['common_name'])
-                        new_desc = st.text_area("Description", value=row['description'])
-                        new_water = st.text_input("Watering", value=row['preferred_watering'])
-                        new_fert = st.text_input("Fertilizer", value=row['fertilizer_needs'])
-                        
-                        col1, col2 = st.columns(2)
-                        if col1.button("💾 Save Changes", use_container_width=True):
-                            target = db.query(BotanicalRegistry).get(int(row['species_id']))
-                            target.common_name = new_common
-                            target.description = new_desc
-                            target.preferred_watering = new_water
-                            target.fertilizer_needs = new_fert
-                            db.commit()
-                            st.success("Changes saved!")
-                            st.rerun()
-                        
-                        if col2.button("🗑️ Delete Species", use_container_width=True):
-                            db.query(BotanicalRegistry).filter(BotanicalRegistry.species_id == int(row['species_id'])).delete()
-                            db.commit()
-                            st.warning(f"Deleted {sel_s}.")
-                            st.rerun()
+                    
+                    sample_img_path = None
+                    plantings = db.query(Planting).filter(Planting.species_id == int(row['species_id'])).all()
+                    if plantings:
+                        p_ids = [p.planting_id for p in plantings]
+                        media = db.query(MediaAsset).filter(MediaAsset.entity_type == "Planting", MediaAsset.entity_id.in_(p_ids)).first()
+                        if media and os.path.exists(media.file_path):
+                            sample_img_path = media.file_path
 
-                        st.write(f"**Scientific Name:** {row['scientific_name']}")
-                        st.write(f"**Sunlight:** {row['preferred_sunlight']}")
+                    col_img, col_info = st.columns([1, 2])
+                    
+                    with col_img:
+                        if sample_img_path:
+                            st.image(ImageOps.exif_transpose(Image.open(sample_img_path)), use_container_width=True, caption=row['common_name'])
+                        else:
+                            st.info("📸 No photos taken of this species yet.")
+                            
+                    with col_info:
+                        st.subheader(f"{row['common_name']}")
+                        st.caption(f"*{row['scientific_name']}*")
+                        
+                        if HAS_TTS:
+                            desc_text = f"{row['common_name']}, scientifically known as {row['scientific_name']}. {row['description']}"
+                            audio_bytes = generate_audio(desc_text)
+                            if audio_bytes:
+                                st.audio(audio_bytes, format="audio/mp3")
+                        else:
+                            st.info("🔊 Install `gTTS` (`pip install gTTS`) to hear plant profiles.")
+                            
+                        st.markdown(f"**Growth Rate:** {row['growth_rate']}")
+                        st.markdown(f"**Sunlight:** {row['preferred_sunlight']}")
+                        st.markdown(f"**Watering:** {row['preferred_watering']} (Every {row['watering_frequency_days']} days)")
+                        st.markdown(f"**Fertilizer:** {row['fertilizer_needs']}")
+                        st.markdown(f"**Description:** {row['description']}")
+                        
+                        with st.expander(f"✏️ Edit Profile & Care Sheet", expanded=False):
+                            new_common = st.text_input("Common Name", value=row['common_name'])
+                            new_desc = st.text_area("Description", value=row['description'], height=150)
+                            new_water = st.text_input("Watering", value=row['preferred_watering'])
+                            new_fert = st.text_input("Fertilizer", value=row['fertilizer_needs'])
+                            
+                            c1, c2 = st.columns(2)
+                            if c1.button("💾 Save Changes", use_container_width=True):
+                                target = db.query(BotanicalRegistry).get(int(row['species_id']))
+                                target.common_name = new_common
+                                target.description = new_desc
+                                target.preferred_watering = new_water
+                                target.fertilizer_needs = new_fert
+                                db.commit()
+                                st.success("Changes saved!")
+                                st.rerun()
+                            
+                            if c2.button("🗑️ Delete Species", use_container_width=True):
+                                db.query(BotanicalRegistry).filter(BotanicalRegistry.species_id == int(row['species_id'])).delete()
+                                db.commit()
+                                st.warning(f"Deleted {sel_s}.")
+                                st.rerun()
             else: st.info("Registry empty.")
         except Exception as e:
             st.error(f"Database error: {e}")
@@ -275,52 +423,74 @@ def main():
         st.title("📸 AI Intake & Assignment")
         t1, t2, t3 = st.tabs(["New Intake", "Batch Queue", "Assign Location"])
         with t1:
-            asset_type = st.selectbox("Asset Type", ["Planting", "Property Anchor", "Project Reference", "Lidar Scan"])
-            img = st.file_uploader("Upload Photo", type=["jpg","png","jpeg","heic"])
+            asset_type = st.selectbox("Asset Type", ["Planting", "Property Anchor", "Project Reference", "Lidar Scan", "Video Audit"])
+            img = st.file_uploader("Upload Photo or Video", type=["jpg","png","jpeg","heic","mp4","mov"])
             if img and st.button("🚀 Process Intake", use_container_width=True):
                 try:
-                    pil_img = Image.open(img); pil_img = ImageOps.exif_transpose(pil_img)
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    is_video = img.name.lower().endswith(('.mp4', '.mov'))
                     
-                    if asset_type == "Planting":
-                        res = identify_plant(img.getvalue(), simulate=sim_mode)
-                        if res:
-                            f_path = os.path.abspath(os.path.join(MEDIA_SUBDIRS["Plantings"], f"plant_{ts}.jpg"))
-                            pil_img.convert("RGB").save(f_path, "JPEG")
-                            
-                            spec = db.query(BotanicalRegistry).filter(BotanicalRegistry.scientific_name == res["scientific_name"]).first()
-                            if not spec:
-                                spec = BotanicalRegistry(common_name=res["common_name"], scientific_name=res["scientific_name"], plant_category=res["plant_category"], description=res["description"], preferred_watering=res["watering"], watering_frequency_days=res["watering_days"], fertilizer_needs=res["fertilizer"], ai_confidence=res["confidence"])
-                                db.add(spec); db.commit(); db.refresh(spec)
-                            new_p = Planting(species_id=spec.species_id, plant_name=res["common_name"], status="Intake", date_planted=datetime.now(UTC))
-                            db.add(new_p); db.commit(); db.refresh(new_p)
-                            db.add(MediaAsset(file_path=f_path, entity_type="Planting", entity_id=new_p.planting_id, ai_confidence=res["confidence"], timestamp=datetime.now(UTC)))
-                            db.commit(); st.balloons(); st.success(f"Saved {res['common_name']}!")
+                    if is_video or asset_type == "Video Audit":
+                        folder = MEDIA_SUBDIRS["Projects"] # Videos default to projects for now
+                        f_path = os.path.abspath(os.path.join(folder, f"audit_{ts}{os.path.splitext(img.name)[1]}"))
+                        with open(f_path, "wb") as f: f.write(img.getvalue())
+                        db.add(MediaAsset(file_path=f_path, entity_type="Video Audit", entity_id=0, timestamp=datetime.now(UTC)))
+                        db.commit(); st.success(f"Saved Video Audit!")
                     else:
-                        if asset_type == "Property Anchor": folder = MEDIA_SUBDIRS["Property"]
-                        elif asset_type == "Lidar Scan": folder = MEDIA_SUBDIRS["Lidar"]
-                        else: folder = MEDIA_SUBDIRS["Projects"]
+                        pil_img = Image.open(img); pil_img = ImageOps.exif_transpose(pil_img)
+                        img_byte_arr = io.BytesIO()
+                        pil_img.convert("RGB").save(img_byte_arr, format="JPEG")
+                        img_bytes_for_api = img_byte_arr.getvalue()
                         
-                        f_path = os.path.abspath(os.path.join(folder, f"{asset_type.lower().replace(' ', '_')}_{ts}.jpg"))
-                        pil_img.convert("RGB").save(f_path, "JPEG")
-                        db.add(MediaAsset(file_path=f_path, entity_type=asset_type, entity_id=0, timestamp=datetime.now(UTC)))
-                        db.commit(); st.success(f"Saved {asset_type} photo to {folder}!")
+                        if asset_type == "Planting":
+                            res = identify_plant(img_bytes_for_api, simulate=sim_mode)
+                            if res:
+                                f_path = os.path.abspath(os.path.join(MEDIA_SUBDIRS["Plantings"], f"plant_{ts}.jpg"))
+                                pil_img.convert("RGB").save(f_path, "JPEG")
+                                
+                                spec = db.query(BotanicalRegistry).filter(BotanicalRegistry.scientific_name == res["scientific_name"]).first()
+                                if not spec:
+                                    spec = BotanicalRegistry(common_name=res["common_name"], scientific_name=res["scientific_name"], plant_category=res["plant_category"], description=res["description"], preferred_watering=res["watering"], watering_frequency_days=res["watering_days"], fertilizer_needs=res["fertilizer"], ai_confidence=res["confidence"])
+                                    db.add(spec); db.commit(); db.refresh(spec)
+                                new_p = Planting(species_id=spec.species_id, plant_name=res["common_name"], status="Intake", date_planted=datetime.now(UTC))
+                                db.add(new_p); db.commit(); db.refresh(new_p)
+                                db.add(MediaAsset(file_path=f_path, entity_type="Planting", entity_id=new_p.planting_id, ai_confidence=res["confidence"], timestamp=datetime.now(UTC)))
+                                db.commit(); st.balloons(); st.success(f"Saved {res['common_name']}!")
+                        else:
+                            if asset_type == "Property Anchor": folder = MEDIA_SUBDIRS["Property"]
+                            elif asset_type == "Lidar Scan": folder = MEDIA_SUBDIRS["Lidar"]
+                            else: folder = MEDIA_SUBDIRS["Projects"]
+                            
+                            f_path = os.path.abspath(os.path.join(folder, f"{asset_type.lower().replace(' ', '_')}_{ts}.jpg"))
+                            pil_img.convert("RGB").save(f_path, "JPEG")
+                            db.add(MediaAsset(file_path=f_path, entity_type=asset_type, entity_id=0, timestamp=datetime.now(UTC)))
+                            db.commit(); st.success(f"Saved {asset_type} photo to {folder}!")
                 except Exception as e: st.error(f"Error: {e}")
                 
         with t2:
             st.subheader("📁 Batch Process Queue")
             queue_files = [f for f in os.listdir(QUEUE_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.heic'))]
-            st.write(f"Found **{len(queue_files)}** items in `04_Temp/intake_queue`.")
+            st.write(f"Found **{len(queue_files)}** items in `{QUEUE_DIR}`.")
             
             if len(queue_files) > 0 and st.button(f"🚀 Batch Process {len(queue_files)} Photos", use_container_width=True):
                 progress_bar = st.progress(0)
+                identified_plants = []
+                
                 for idx, filename in enumerate(queue_files):
                     file_path = os.path.join(QUEUE_DIR, filename)
                     try:
-                        with open(file_path, "rb") as f: img_bytes = f.read()
                         pil_img = Image.open(file_path); pil_img = ImageOps.exif_transpose(pil_img)
-                        res = identify_plant(img_bytes, simulate=sim_mode)
+                        
+                        api_img = pil_img.copy()
+                        api_img.thumbnail((800, 800)) 
+                        
+                        img_byte_arr = io.BytesIO()
+                        api_img.convert("RGB").save(img_byte_arr, format="JPEG", quality=75)
+                        img_bytes_for_api = img_byte_arr.getvalue()
+                        
+                        res = identify_plant(img_bytes_for_api, simulate=sim_mode)
                         if res:
+                            identified_plants.append(res['common_name'])
                             spec = db.query(BotanicalRegistry).filter(BotanicalRegistry.scientific_name == res["scientific_name"]).first()
                             if not spec:
                                 spec = BotanicalRegistry(common_name=res["common_name"], scientific_name=res["scientific_name"], plant_category=res["plant_category"], description=res["description"], preferred_watering=res["watering"], fertilizer_needs=res["fertilizer"], ai_confidence=res["confidence"])
@@ -331,13 +501,22 @@ def main():
                             ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                             final_path = os.path.abspath(os.path.join(MEDIA_SUBDIRS["Plantings"], f"plant_{ts}.jpg"))
                             pil_img.convert("RGB").save(final_path, "JPEG")
-                            os.remove(file_path)
+                            os.remove(file_path) 
                             
                             db.add(MediaAsset(file_path=final_path, entity_type="Planting", entity_id=new_p.planting_id, ai_confidence=res["confidence"], timestamp=datetime.now(UTC)))
                             db.commit()
                     except Exception as e: st.error(f"Error processing {filename}: {e}")
                     progress_bar.progress((idx + 1) / len(queue_files))
-                st.balloons(); st.success("Batch Processing Complete!"); st.rerun()
+                
+                st.balloons()
+                st.success("Batch Processing Complete!")
+                
+                if HAS_TTS and identified_plants:
+                    summary_text = "I have identified the following plants: " + ", ".join(identified_plants)
+                    audio_bytes = generate_audio(summary_text)
+                    if audio_bytes:
+                        st.write("🔊 **Batch Summary:**")
+                        st.audio(audio_bytes, format="audio/mp3")
 
         with t3:
             try:
@@ -373,41 +552,61 @@ def main():
                         "Confidence": st.column_config.ProgressColumn(format="%.2f", min_value=0, max_value=1)
                     }
                 )
-                sel_id = st.selectbox("Select Photo ID to View/Delete", options=df['ID'].tolist())
+                sel_id = st.selectbox("Select Asset ID to View/Delete", options=df['ID'].tolist())
                 row = df[df['ID'] == sel_id].iloc[0]
                 if os.path.exists(row['file_path']):
-                    st.image(ImageOps.exif_transpose(Image.open(row['file_path'])), use_container_width=True)
+                    # SPRINT 2: Video Audit Support in Gallery
+                    if row['file_path'].lower().endswith(('.mp4', '.mov')):
+                        st.video(row['file_path'])
+                    else:
+                        st.image(ImageOps.exif_transpose(Image.open(row['file_path'])), use_container_width=True)
+                        
                     if st.button("🗑️ Delete Asset", use_container_width=True):
                         db.query(MediaAsset).filter(MediaAsset.media_id == int(sel_id)).delete()
                         if os.path.exists(row['file_path']): os.remove(row['file_path'])
                         db.commit(); st.rerun()
                 else:
-                    st.error(f"Image not found at {row['file_path']}")
+                    st.error(f"Asset not found at {row['file_path']}")
             else: st.info("No media recorded.")
         except:
             st.error("Error reading Media_Assets table.")
 
     elif menu == "Garden Inventory":
         st.title("📂 Garden Inventory")
+        st.info("💡 Hotkey Support: Double-click a cell to edit. Use Tab and Arrow keys to navigate.")
         try:
             df_inv = pd.read_sql("SELECT planting_id as ID, plant_name as Plant, variety as Variety, status as Status, date_planted as Planted FROM Plantings", engine)
             if not df_inv.empty: 
-                # Upgraded Grid Display
-                st.dataframe(
+                # SPRINT 2: Editable Garden Inventory
+                edited_df = st.data_editor(
                     df_inv, 
                     use_container_width=True, 
                     hide_index=True,
                     column_config={
-                        "ID": st.column_config.NumberColumn(format="%d"),
-                        "Planted": st.column_config.DatetimeColumn(format="MMM DD, YYYY")
-                    }
+                        "ID": st.column_config.NumberColumn(format="%d", disabled=True),
+                        "Planted": st.column_config.DatetimeColumn(format="MMM DD, YYYY", disabled=True),
+                        "Status": st.column_config.SelectboxColumn(options=["Intake", "Ready to Plant", "In Ground", "Harvested", "Dead"])
+                    },
+                    key="garden_editor"
                 )
+                
+                if st.button("💾 Save Inventory Updates"):
+                    for idx, row in edited_df.iterrows():
+                        db.query(Planting).filter(Planting.planting_id == int(row['ID'])).update({
+                            "plant_name": row['Plant'],
+                            "variety": row['Variety'],
+                            "status": row['Status']
+                        })
+                    db.commit()
+                    st.success("Updates saved!")
+                    st.rerun()
             else: st.info("Inventory empty.")
         except:
             st.error("Error reading Plantings table.")
 
     elif menu == "Supply Inventory":
         st.title("📦 Supply & Product Inventory")
+        st.info("Manage mulch, fertilizers, tools, pest control, and raw materials. Double-click any row in the table below to edit.")
         
         with st.expander("➕ Add New Supply/Tool", expanded=False):
             with st.form("new_supply_form"):
@@ -420,6 +619,9 @@ def main():
                 i_loc = st.text_input("Storage Location (e.g., Garden Shed, Garage)")
                 i_notes = st.text_area("Notes / Purpose")
                 
+                # Image Upload for Supply
+                i_img = st.file_uploader("Upload Product Photo (Optional)", type=["jpg","png","jpeg","heic"])
+                
                 if st.form_submit_button("💾 Save to Inventory", use_container_width=True):
                     new_item = InventoryItem(
                         name=i_name, category=i_cat, type=i_type, 
@@ -427,6 +629,19 @@ def main():
                     )
                     db.add(new_item)
                     db.commit()
+                    db.refresh(new_item)
+                    
+                    if i_img:
+                        try:
+                            pil_img = Image.open(i_img); pil_img = ImageOps.exif_transpose(pil_img)
+                            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            f_path = os.path.abspath(os.path.join(MEDIA_SUBDIRS["Inventory"], f"supply_{new_item.item_id}_{ts}.jpg"))
+                            pil_img.convert("RGB").save(f_path, "JPEG")
+                            db.add(MediaAsset(file_path=f_path, entity_type="Supply", entity_id=new_item.item_id, timestamp=datetime.now(UTC)))
+                            db.commit()
+                        except Exception as e:
+                            st.warning(f"Item saved, but photo upload failed: {e}")
+                    
                     st.success("Item added successfully!")
                     st.rerun()
 
@@ -438,16 +653,43 @@ def main():
                 if filter_cat != "All":
                     df_supplies = df_supplies[df_supplies['Category'] == filter_cat]
                     
-                # Upgraded Data Grid with Sorting and Formatting
-                st.dataframe(
+                # SPRINT 2: Fully Editable Inventory Grid!
+                edited_supplies = st.data_editor(
                     df_supplies, 
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "ID": st.column_config.NumberColumn(format="%d"),
+                        "ID": st.column_config.NumberColumn(format="%d", disabled=True),
+                        "Category": st.column_config.SelectboxColumn(options=["Soil/Mix", "Fertilizer", "Mulch", "Pest Control", "Additive", "Container", "Tools/Equipment", "Seeds", "Propagation", "Other"]),
                         "Qty": st.column_config.NumberColumn(format="%.1f")
-                    }
+                    },
+                    key="supply_editor"
                 )
+                
+                if st.button("💾 Save Grid Edits", use_container_width=True):
+                    for idx, row in edited_supplies.iterrows():
+                        db.query(InventoryItem).filter(InventoryItem.item_id == int(row['ID'])).update({
+                            "name": row['Item'],
+                            "category": row['Category'],
+                            "type": row['Type'],
+                            "quantity": row['Qty'],
+                            "unit": row['Unit'],
+                            "location": row['Location']
+                        })
+                    db.commit()
+                    st.success("Inventory updated!")
+                    st.rerun()
+                    
+                # Supply Image Viewer
+                st.divider()
+                st.subheader("🖼️ View Supply Photo")
+                sel_sup_id = st.selectbox("Select Supply ID to view photo", options=df_supplies['ID'].tolist())
+                if sel_sup_id:
+                    sup_media = db.query(MediaAsset).filter(MediaAsset.entity_type == "Supply", MediaAsset.entity_id == int(sel_sup_id)).order_by(MediaAsset.timestamp.desc()).first()
+                    if sup_media and os.path.exists(sup_media.file_path):
+                        st.image(ImageOps.exif_transpose(Image.open(sup_media.file_path)), width=400)
+                    else:
+                        st.info("No photo uploaded for this item.")
             else:
                 st.info("No supplies recorded yet. Run the reset macro to populate initial inventory.")
         except Exception as e:
@@ -486,6 +728,21 @@ def main():
                 st.info("Property Grid data missing on R7910. Run 'seed_data.py' from XPS.")
         except:
              st.error("Error reading Property_Grid table.")
+
+    elif menu == "Sensor Diagnostics":
+        st.title("📈 Sensor & Health Analytics")
+        st.info("This section will track historical moisture, temperature, EC, pH, and plant health data via interactive Plotly charts.")
+        
+        # Placeholder for Sensor_Readings and Irrigation_Logs visualization
+        try:
+            readings = pd.read_sql("SELECT timestamp, soil_moisture, temperature FROM Sensor_Readings ORDER BY timestamp ASC", engine)
+            if not readings.empty:
+                fig = px.line(readings, x="timestamp", y=["soil_moisture", "temperature"], title="Recent Sensor Data")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No sensor readings available yet.")
+        except Exception as e:
+            st.error(f"Error reading sensor logs: {e}")
 
     elif menu == "Lake Data":
         st.title("🌊 Lake Norman Water Level")

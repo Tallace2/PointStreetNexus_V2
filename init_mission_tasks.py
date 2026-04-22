@@ -12,7 +12,13 @@ def init_mission():
         Task(name="Audit Plant.id data for 'Indoor/Outdoor' accuracy", task_type="Data", priority=2, created_at=datetime.now(UTC)),
         Task(name="DEV_Task: Establish Git Push/Pull pipeline between XPS and R7910", task_type="Development", priority=1, created_at=datetime.now(UTC)),
         Task(name="DEV_Task: Implement robust 'Architect's Sweep' for USGS API", task_type="Development", priority=2, created_at=datetime.now(UTC)),
-        Task(name="DEV_Task: Fix OperationalError by confirming R7910 SQL Services", task_type="Development", priority=1, created_at=datetime.now(UTC))
+        Task(name="DEV_Task: Fix OperationalError by confirming R7910 SQL Services", task_type="Development", priority=1, created_at=datetime.now(UTC)),
+        Task(name="DEV_Task: Build V3 Enterprise UI with Categorized Navigation", task_type="Development", priority=1, created_at=datetime.now(UTC)),
+        Task(name="DEV_Task: Implement Property Zones and System Glossary Tables", task_type="Development", priority=1, created_at=datetime.now(UTC)),
+        Task(name="DEV_Task: Build Infrastructure Management System (IMS) for IT Assets", task_type="Development", priority=2, created_at=datetime.now(UTC)),
+        Task(name="DEV_Task: Integrate 3D Property Grid with Plotly Graph Objects", task_type="Development", priority=1, created_at=datetime.now(UTC)),
+        Task(name="DEV_Task: Create Supply & Product Inventory Table (CRUD)", task_type="Development", priority=2, created_at=datetime.now(UTC)),
+        Task(name="DEV_Task: Fix Intake Queue Pathing for S-Drive vs C-Drive Failover", task_type="Development", priority=1, created_at=datetime.now(UTC))
     ]
     
     try:
