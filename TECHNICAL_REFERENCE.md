@@ -19,6 +19,7 @@ This document provides a quick reference for common commands and a glossary of t
 | `python seed_it_assets.py` | Populates the IT_Assets and Software_Assets tables. |
 | `python init_mission_tasks.py` | Logs the daily mission goals into the Tasks table. |
 | `python _full_reset_macro.py` | **MACRO**: Runs Export, Reset, Import, Seed, and Mission scripts sequentially. |
+| `python create_intake_folder.py` | Initializes the core directory structure (`02_Data/Media`, `04_Temp/intake_queue`). |
 
 ### **PowerShell (Terminal & File Management)**
 | Command | Purpose |
@@ -38,6 +39,8 @@ This document provides a quick reference for common commands and a glossary of t
 | `git pull origin main` | Downloads the latest version of the code from GitHub to your machine. |
 | `git status` | Shows which files have been changed and what is staged for commit. |
 | `git log -n 5` | Shows a history of the last 5 versions (commits). |
+| `git tag -a V2.5 -m "Desc"` | Creates a permanent revision tag for major milestones. |
+| `git push origin --tags` | Uploads your tags to GitHub. |
 
 ### **SQL (Database Management - Run in SSMS)**
 | Query | Purpose |

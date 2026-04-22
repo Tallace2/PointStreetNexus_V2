@@ -24,6 +24,7 @@ if __name__ == "__main__":
     # 3. Seed Infrastructure FIRST (This creates GardenBeds for Foreign Keys)
     run_script("seed_data.py")
     run_script("seed_it_assets.py")
+    run_script("seed_inventory.py") # Added supply inventory seeding
     run_script("init_mission_tasks.py")
     
     # 4. Restore Plant Data LAST (So Foreign Keys are valid)
